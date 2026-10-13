@@ -6,4 +6,6 @@
     <usb-device vendor-id="13080" product-id="1062" />
     <usb-device vendor-id="13080" product-id="1078" />
     <usb-device vendor-id="13080" product-id="1080" />
+    <usb-device vendor-id="13770" product-id="4385" />
+    <usb-device vendor-id="13770" product-id="4417" />
 </resources>

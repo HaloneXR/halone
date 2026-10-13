@@ -44,11 +44,16 @@ worth reading before changing any of it.
 | XREAL Air 2 | expected | expected | expected | same protocol, untested |
 | XREAL Air 2 Ultra | expected | expected | expected | different interfaces, untested |
 | XREAL One Pro, One | 1 kHz raw IMU over USB networking, axes from a 1S | full SBS 3840x1080 | expected | written from [published notes](docs/protocol/xreal-one.md), untested |
+| VITURE Luma Pro | 120 Hz fused pose, SDK-checked parser | full SBS 3840x1200 at 60 Hz | 0–8 | **awaiting hardware verification**; USB IDs 35ca:1121 / 35ca:1141 |
 
 Glasses we don't own are welcome — the driver layer is designed so support can
 be written and tested against recorded packet captures with no hardware.
 See [docs/adding-a-device.md](docs/adding-a-device.md). It's one class plus one
 line in a list, and there's a reusable contract test suite to check it.
+
+VITURE bring-up and evidence limits are in [docs/viture-testing.md](docs/viture-testing.md).
+The driver currently covers Luma Pro; Beast, Pro 2 and Luma Ultra use different
+protocols. Vendor SDK binaries are not needed to build or run Halone.
 
 ## Toolchain
 
