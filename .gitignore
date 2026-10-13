@@ -2,6 +2,7 @@
 .gradle/
 build/
 local.properties
+mise.local.toml
 *.apk
 *.aab
 captures/
@@ -30,3 +31,7 @@ android/app/src/main/assets/apps/
 
 # Packed Halone apps
 *.halone
+
+# Local proprietary SDK reference archives; not build dependencies.
+/VITURE_XR_Glasses_SDK_for_Android.zip
+/VITURE_XR_Glasses_SDK_for_Web.zip

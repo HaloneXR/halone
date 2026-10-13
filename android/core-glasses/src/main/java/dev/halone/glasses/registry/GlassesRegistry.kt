@@ -42,6 +42,7 @@ class GlassesRegistry(private val drivers: List<GlassesDriver>) {
         fun default(): GlassesRegistry = GlassesRegistry(
             listOf(
                 dev.halone.glasses.drivers.xreal.XrealDriver(),
+                dev.halone.glasses.drivers.viture.VitureDriver(),
             )
         )
     }

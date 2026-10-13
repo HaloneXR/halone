@@ -1,0 +1,30 @@
+[tools]
+java = "temurin-17.0.20+101"
+node = "24.21.0"
+pnpm = "10.33.2"
+
+[tasks.setup]
+description = "Install and build the SDK, then install web dependencies"
+run = ["git submodule update --init --recursive", "pnpm --dir sdk install --frozen-lockfile", "pnpm --dir sdk build", "pnpm --dir web install --frozen-lockfile"]
+
+[tasks.dev]
+description = "Start the desktop simulator and system apps"
+run = "pnpm --dir web dev"
+
+[tasks."web:check"]
+description = "Run web tests and type checks"
+run = ["pnpm --dir web test", "pnpm --dir web typecheck"]
+
+[tasks."web:build"]
+run = "pnpm --dir web build"
+
+[tasks."android:test"]
+run = "./gradlew test"
+
+[tasks."android:build"]
+depends = ["web:build"]
+run = "./gradlew :app:assembleDebug"
+
+[tasks."glasses:test"]
+description = "Run device driver and tracking unit tests"
+run = "./gradlew :core-glasses:testDebugUnitTest"
