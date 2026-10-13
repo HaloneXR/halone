@@ -12,6 +12,15 @@ shared-memory transport. The SDK accepted mode `0x41`, brightness `4`, and
 the four quaternions retained in that fixture. These are SDK interoperability
 vectors, **not recordings from glasses**.
 
+Reproduce the SDK 2.4.0 comparison with:
+
+```sh
+mise exec -- node tools/viture-sdk-probe.cjs VITURE_XR_Glasses_SDK_for_Web.zip
+```
+
+The probe fails if command bytes or SDK-decoded quaternions differ from the
+retained vectors. It prints SDK version, archive digest and input/output data.
+
 Archive SHA-256:
 
 ```text

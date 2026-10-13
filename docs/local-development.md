@@ -53,7 +53,8 @@ needs a phone and glasses, with adb over WiFi while USB-C is occupied.
 Use `mise exec -- ./gradlew :app:installDebug` once the phone is connected.
 
 The Android and Web VITURE SDK archives supplied locally are reference inputs;
-they have not been integrated. Confirm their APIs and redistribution terms
-before choosing a transport or checking vendor binaries into the repository.
+the driver uses Halone's HID transport without packaging vendor binaries.
+See [viture-testing.md](viture-testing.md) for the Luma Pro bring-up sequence
+and [protocol/viture-hid.md](protocol/viture-hid.md) for the SDK comparison.
 Packet captures, axis measurements and real stereo checks are still required
-to claim device support.
+to verify support on hardware.
