@@ -2,6 +2,7 @@
 .gradle/
 build/
 local.properties
+mise.local.toml
 *.apk
 *.aab
 captures/

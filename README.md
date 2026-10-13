@@ -51,6 +51,12 @@ line in a list, and there's a reusable contract test suite to check it.
 
 ## Toolchain
 
+For a mise-managed local setup, see [docs/local-development.md](docs/local-development.md).
+Run `mise install` and `mise run setup`, then `mise run dev` for the desktop
+simulator or `mise run android:build` for a debug APK. Published developer
+guides are at [halone.dev](https://halone.dev/), including the
+[hardware driver guide](https://halone.dev/hardware/).
+
 - JDK 17 (`/Library/Java/JavaVirtualMachines/zulu-17.jdk`) — AGP does not support 22/24
 - Android SDK 37.1, Gradle 9.5.0, AGP 9.3.1, Kotlin 2.4.10, GeckoView 154
 - `android.builtInKotlin=false` and `android.newDsl=false` are deliberate and
