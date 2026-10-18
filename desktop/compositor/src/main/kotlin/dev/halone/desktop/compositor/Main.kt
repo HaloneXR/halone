@@ -3,7 +3,8 @@ package dev.halone.desktop.compositor
 import dev.halone.compositor.PanelPose
 import dev.halone.desktop.compositor.producer.InputRouter
 import dev.halone.desktop.compositor.producer.PanelSpec
-import dev.halone.desktop.compositor.render.CursorPose
+import dev.halone.compositor.ChromePress
+import dev.halone.compositor.TitleBar
 import dev.halone.desktop.compositor.producer.ProducerHost
 import dev.halone.desktop.compositor.producer.ProducerTexture
 import dev.halone.desktop.compositor.render.DesktopCompositor
@@ -28,7 +29,7 @@ import kotlin.system.exitProcess
 private const val PANEL_VERTICAL_FILL = 0.75f
 private const val MOUSE_DEGREES_PER_PIXEL = 0.08f
 private const val PACE_TIMEOUT_NS = 100_000_000L
-private const val CURSOR_PX = 64
+private const val CURSOR_PX = 128
 
 /** How frames are paced, aimed and warped. */
 private data class Condition(
@@ -65,6 +66,8 @@ private class Options(args: Array<String>) {
     val producerMarginMs = value(args, "--producer-margin")?.toFloat() ?: 10f
     val producerLog = value(args, "--producer-log") ?: "producer.log"
     val inputTest = "--input-test" in args
+    val chromeTest = "--chrome-test" in args
+    val pitch = value(args, "--pitch")?.toFloat() ?: 0f
     val noPresentWait = "--no-present-wait" in args
     val scanSweep = "--scan-sweep" in args
     val scanValues = value(args, "--scan-values")?.split(",")?.map { it.toFloat() } ?: listOf(1f, 0f, -1f)
@@ -84,11 +87,11 @@ private fun inputScript(): List<Pair<Double, (InputRouter, DesktopPanel) -> Unit
     val steps = mutableListOf<Pair<Double, (InputRouter, DesktopPanel) -> Unit>>()
     steps += 0.0 to { r, p -> r.pointAt(p, 100f, 100f) }
     steps += 0.3 to { r, p -> r.pointAt(p, 265f, 505f) }
-    steps += 0.6 to { r, _ -> r.button(0, true, 0, 0.6) }
-    steps += 0.65 to { r, _ -> r.button(0, false, 0, 0.65) }
+    steps += 0.6 to { r, _ -> r.button(0, true, 0, 0.6, 0f) }
+    steps += 0.65 to { r, _ -> r.button(0, false, 0, 0.65, 0f) }
     steps += 1.0 to { r, p -> r.pointAt(p, 117f, 505f) }
-    steps += 1.1 to { r, _ -> r.button(0, true, 0, 1.1) }
-    steps += 1.15 to { r, _ -> r.button(0, false, 0, 1.15) }
+    steps += 1.1 to { r, _ -> r.button(0, true, 0, 1.1, 0f) }
+    steps += 1.15 to { r, _ -> r.button(0, false, 0, 1.15, 0f) }
     val keys = listOf(GLFW_KEY_H to 4, GLFW_KEY_E to 14, GLFW_KEY_L to 37, GLFW_KEY_L to 37, GLFW_KEY_O to 31)
     keys.forEachIndexed { i, (key, scancode) ->
         val at = 1.5 + i * 0.1
@@ -97,6 +100,29 @@ private fun inputScript(): List<Pair<Double, (InputRouter, DesktopPanel) -> Unit
     }
     steps += 2.3 to { r, p -> r.pointAt(p, 324f, 601f) }
     steps += 2.4 to { r, _ -> r.scroll(0.0, -3.0, 0) }
+    return steps
+}
+
+/**
+ * Drives the chrome of the second window the way the mouse would: drags its
+ * title bar sideways, clicks its pin, then drags its bottom-right corner.
+ */
+private fun chromeScript(): List<Pair<Double, (InputRouter, DesktopPanel) -> Unit>> {
+    val steps = mutableListOf<Pair<Double, (InputRouter, DesktopPanel) -> Unit>>()
+    steps += 0.0 to { r, p -> r.pointAt(p, p.widthPx / 2f, p.heightPx + TitleBar.GAP_PX + TitleBar.HEIGHT_PX / 2f) }
+    steps += 0.3 to { r, _ -> r.button(0, true, 0, 0.3, 0f) }
+    for (i in 1..20) steps += (0.3 + i * 0.03) to { r, _ -> r.move(-12.0, 0.0, 0) }
+    steps += 1.0 to { r, _ -> r.button(0, false, 0, 1.0, 0f) }
+    steps += 1.5 to { r, p ->
+        val pin = TitleBar.pin(p.widthPx, p.heightPx)
+        r.pointAt(p, pin.left + pin.width / 2f, pin.top + pin.height / 2f)
+    }
+    steps += 1.7 to { r, _ -> r.button(0, true, 0, 1.7, 0f) }
+    steps += 1.75 to { r, _ -> r.button(0, false, 0, 1.75, 0f) }
+    steps += 2.2 to { r, p -> r.pointAt(p, p.widthPx + 20f, p.heightPx + 20f) }
+    steps += 2.4 to { r, _ -> r.button(0, true, 0, 2.4, 0f) }
+    for (i in 1..15) steps += (2.4 + i * 0.03) to { r, _ -> r.move(8.0, 5.0, 0) }
+    steps += 3.0 to { r, _ -> r.button(0, false, 0, 3.0, 0f) }
     return steps
 }
 
@@ -187,13 +213,31 @@ fun main(args: Array<String>) {
         compositor.scene.open(panel)
         opened++
     }
-    fun closePanel() {
-        val panel = compositor.scene.focused ?: compositor.scene.panels.lastOrNull() ?: return
+    fun closePanel(panel: DesktopPanel? = compositor.scene.focused ?: compositor.scene.panels.lastOrNull()) {
+        panel ?: return
         compositor.scene.remove(panel)
         compositor.scene.layOutCylindrical(immediate = false)
+        if (panel.texture is ProducerTexture) return
         vkDeviceWaitIdle(vk.device)
         compositor.forget(panel.texture)
         panel.texture.close()
+    }
+    val chromeActions = object : ChromePress.Actions<DesktopPanel> {
+        override fun resizeContent(panel: DesktopPanel, widthPx: Int, heightPx: Int) {
+            panel.widthPx = widthPx
+            panel.heightPx = heightPx
+        }
+
+        override fun back(panel: DesktopPanel) = Unit
+
+        override fun close(panel: DesktopPanel) = closePanel(panel)
+
+        override fun dropped(panel: DesktopPanel) =
+            println("dropped '${panel.id}' at %+.0f°, slot %+.0f°".format(
+                Math.toDegrees(panel.pose.yawRadians.toDouble()), Math.toDegrees(panel.slotYawRadians.toDouble())))
+
+        override fun resized(panel: DesktopPanel, oldWidthPx: Int, oldHeightPx: Int) =
+            println("resized '${panel.id}' ${oldWidthPx}x$oldHeightPx -> ${panel.widthPx}x${panel.heightPx}")
     }
     val host = options.producer?.let { executable ->
         ProducerHost(vk, executable, options.producerPanels, options.producerMarginMs, File(options.producerLog)).also { host ->
@@ -201,6 +245,8 @@ fun main(args: Array<String>) {
                 val spec = options.producerPanels[index]
                 val panel = DesktopPanel("producer-$index", spec.width, spec.height, texture, PanelPose(distanceMetres = optics.virtualImageDistanceMetres))
                 panel.fitToFov(verticalFov, PANEL_VERTICAL_FILL)
+                panel.title = java.net.URI(spec.url).let { (it.host ?: "") + (it.path ?: "") }
+                panel.tag = "web"
                 compositor.scene.open(panel)
                 println("producer panel $index ready: ${spec.width}x${spec.height} ${spec.url}")
             }
@@ -238,7 +284,7 @@ fun main(args: Array<String>) {
     }
 
     var yaw = 0f
-    var pitch = 0f
+    var pitch = options.pitch
     var captured = false
     var lastX = Double.NaN
     var lastY = Double.NaN
@@ -246,7 +292,7 @@ fun main(args: Array<String>) {
     var headYawRadians = 0f
     var headPitchRadians = 0f
     var mods = 0
-    val router = host?.let { InputRouter(it, compositor.scene) }
+    val router = if (host != null || session != null) InputRouter(host, compositor.scene, chromeActions) else null
     var routerPlaced = false
     if (router != null) {
         compositor.cursorTexture = StaticTexture(vk, CURSOR_PX, CURSOR_PX, TestPattern.cursor(CURSOR_PX))
@@ -263,7 +309,7 @@ fun main(args: Array<String>) {
             glfwSetInputMode(w, GLFW_CURSOR, GLFW_CURSOR_DISABLED)
             return@glfwSetMouseButtonCallback
         }
-        router?.button(button, action == GLFW_PRESS, modifiers, glfwGetTime())
+        router?.button(button, action == GLFW_PRESS, modifiers, glfwGetTime(), compositor.headYawRadians)
     }
     glfwSetCursorPosCallback(window) { _, x, y ->
         if (captured && !lastX.isNaN()) {
@@ -315,7 +361,7 @@ fun main(args: Array<String>) {
     }
 
     var scriptStart = 0.0
-    val script = ArrayDeque(inputScript())
+    val script = ArrayDeque(if (options.chromeTest) chromeScript() else inputScript())
 
     val frameMs = 1000f / refreshHz
     val start = glfwGetTime()
@@ -367,15 +413,15 @@ fun main(args: Array<String>) {
                     router.recentre(headYawRadians, headPitchRadians)
                     routerPlaced = true
                 }
-                router.refreshHit()
-                compositor.cursor = CursorPose(router.yawRadians, router.pitchRadians, router.hitDistanceMetres ?: optics.virtualImageDistanceMetres)
+                router.clamp()
+                compositor.pointerDirection = router.direction
             }
             val warp = if (aiming != null && photon != null && condition.reproject) { { aiming.warpPoses(photon) } } else null
             compositor.record(target, head, warp)
             host?.tick(sampleNs + (if (refreshNs > 0) refreshNs else (1e9 / refreshHz).toLong()))
         }
         if (drawn) frames++
-        if (options.inputTest && router != null) {
+        if ((options.inputTest || options.chromeTest) && router != null) {
             val page = compositor.scene.find("producer-1")
             if (page != null && page.texture.ready) {
                 if (scriptStart == 0.0) scriptStart = now + 3.0

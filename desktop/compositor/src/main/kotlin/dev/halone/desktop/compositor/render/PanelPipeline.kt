@@ -107,7 +107,7 @@ class PanelPipeline(private val vk: VulkanContext, colorFormat: Int) : AutoClose
                 .magFilter(VK_FILTER_LINEAR).minFilter(VK_FILTER_LINEAR)
                 .addressModeU(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE).addressModeV(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
                 .addressModeW(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
-                .mipmapMode(VK_SAMPLER_MIPMAP_MODE_LINEAR).maxLod(0f), null, pLayout), "sampler")
+                .mipmapMode(VK_SAMPLER_MIPMAP_MODE_LINEAR).maxLod(VK_LOD_CLAMP_NONE), null, pLayout), "sampler")
             sampler = pLayout.get(0)
         }
     }

@@ -9,6 +9,9 @@ import org.lwjgl.vulkan.VkCommandBuffer
 import org.lwjgl.vulkan.VkCommandBufferAllocateInfo
 import org.lwjgl.vulkan.VkCommandBufferBeginInfo
 import org.lwjgl.vulkan.VkImageCreateInfo
+import org.lwjgl.vulkan.VkImageBlit
+import org.lwjgl.vulkan.VkImageMemoryBarrier2
+import org.lwjgl.vulkan.VkDependencyInfo
 import org.lwjgl.vulkan.VkImageViewCreateInfo
 import org.lwjgl.vulkan.VkMemoryAllocateInfo
 import org.lwjgl.vulkan.VkMemoryRequirements
@@ -24,17 +27,25 @@ interface TextureSource : AutoCloseable {
     val ready: Boolean get() = true
 }
 
-/** A device-local BGRA image filled once from CPU pixels. */
-class StaticTexture(private val vk: VulkanContext, override val widthPx: Int, override val heightPx: Int, pixels: ByteBuffer) : TextureSource {
+/** A device-local BGRA image filled once from CPU pixels, mipmapped on request so it stays crisp when drawn small. */
+class StaticTexture(
+    private val vk: VulkanContext,
+    override val widthPx: Int,
+    override val heightPx: Int,
+    pixels: ByteBuffer,
+    mipmapped: Boolean = false,
+) : TextureSource {
     private val image: Long
     private val memory: Long
+    private val levels = if (mipmapped) 32 - Integer.numberOfLeadingZeros(maxOf(widthPx, heightPx)) else 1
     override val view: Long
 
     init {
-        val (img, mem) = createImage(vk, widthPx, heightPx, VK_IMAGE_USAGE_SAMPLED_BIT or VK_IMAGE_USAGE_TRANSFER_DST_BIT)
+        val usage = VK_IMAGE_USAGE_SAMPLED_BIT or VK_IMAGE_USAGE_TRANSFER_DST_BIT or (if (levels > 1) VK_IMAGE_USAGE_TRANSFER_SRC_BIT else 0)
+        val (img, mem) = createImage(vk, widthPx, heightPx, usage, levels)
         image = img
         memory = mem
-        view = createView(vk, image)
+        view = createView(vk, image, levels = levels)
         upload(pixels)
     }
 
@@ -55,19 +66,48 @@ class StaticTexture(private val vk: VulkanContext, override val widthPx: Int, ov
         vkUnmapMemory(vk.device, staging)
 
         oneShot(vk) { cmd ->
-            FrameLoop.transition(cmd, image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            barrier(cmd, 0, levels, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                 VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT)
             val region = VkBufferImageCopy.calloc(1, stack)
             region.imageSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).layerCount(1)
             region.imageExtent().set(widthPx, heightPx, 1)
             vkCmdCopyBufferToImage(cmd, buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region)
-            FrameLoop.transition(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            var w = widthPx
+            var h = heightPx
+            for (level in 1 until levels) {
+                barrier(cmd, level - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT)
+                val nw = maxOf(1, w / 2)
+                val nh = maxOf(1, h / 2)
+                val blit = VkImageBlit.calloc(1, stack)
+                blit.srcSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(level - 1).layerCount(1)
+                blit.srcOffsets(1).set(w, h, 1)
+                blit.dstSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(level).layerCount(1)
+                blit.dstOffsets(1).set(nw, nh, 1)
+                vkCmdBlitImage(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, blit, VK_FILTER_LINEAR)
+                barrier(cmd, level - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT)
+                w = nw
+                h = nh
+            }
+            barrier(cmd, levels - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                 VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                 VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT)
         }
         vkDestroyBuffer(vk.device, buffer, null)
         vkFreeMemory(vk.device, staging, null)
     }
+
+    private fun barrier(cmd: VkCommandBuffer, level: Int, count: Int, from: Int, to: Int, srcStage: Long, srcAccess: Long, dstStage: Long, dstAccess: Long) =
+        stackPush().use { stack ->
+            val b = VkImageMemoryBarrier2.calloc(1, stack).sType(VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2)
+                .srcStageMask(srcStage).srcAccessMask(srcAccess).dstStageMask(dstStage).dstAccessMask(dstAccess)
+                .oldLayout(from).newLayout(to)
+                .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED).dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                .image(image)
+            b.subresourceRange().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).baseMipLevel(level).levelCount(count).layerCount(1)
+            vkCmdPipelineBarrier2(cmd, VkDependencyInfo.calloc(stack).sType(VK_STRUCTURE_TYPE_DEPENDENCY_INFO).pImageMemoryBarriers(b))
+        }
 
     override fun close() {
         vkDestroyImageView(vk.device, view, null)
@@ -76,10 +116,10 @@ class StaticTexture(private val vk: VulkanContext, override val widthPx: Int, ov
     }
 
     companion object {
-        fun createImage(vk: VulkanContext, width: Int, height: Int, usage: Int): Pair<Long, Long> = stackPush().use { stack ->
+        fun createImage(vk: VulkanContext, width: Int, height: Int, usage: Int, levels: Int = 1): Pair<Long, Long> = stackPush().use { stack ->
             val info = VkImageCreateInfo.calloc(stack).sType(VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO)
                 .imageType(VK_IMAGE_TYPE_2D).format(VK_FORMAT_B8G8R8A8_UNORM)
-                .mipLevels(1).arrayLayers(1).samples(VK_SAMPLE_COUNT_1_BIT)
+                .mipLevels(levels).arrayLayers(1).samples(VK_SAMPLE_COUNT_1_BIT)
                 .tiling(VK_IMAGE_TILING_OPTIMAL).usage(usage)
                 .sharingMode(VK_SHARING_MODE_EXCLUSIVE).initialLayout(VK_IMAGE_LAYOUT_UNDEFINED)
             info.extent().set(width, height, 1)
@@ -93,10 +133,10 @@ class StaticTexture(private val vk: VulkanContext, override val widthPx: Int, ov
             image to memory
         }
 
-        fun createView(vk: VulkanContext, image: Long, format: Int = VK_FORMAT_B8G8R8A8_UNORM): Long = stackPush().use { stack ->
+        fun createView(vk: VulkanContext, image: Long, format: Int = VK_FORMAT_B8G8R8A8_UNORM, levels: Int = 1): Long = stackPush().use { stack ->
             val info = VkImageViewCreateInfo.calloc(stack).sType(VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO)
                 .image(image).viewType(VK_IMAGE_VIEW_TYPE_2D).format(format)
-            info.subresourceRange().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(1).layerCount(1)
+            info.subresourceRange().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).levelCount(levels).layerCount(1)
             val pView = stack.mallocLong(1)
             vkCheck(vkCreateImageView(vk.device, info, null, pView), "vkCreateImageView")
             pView.get(0)

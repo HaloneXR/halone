@@ -1,6 +1,8 @@
 package dev.halone.desktop.compositor.producer
 
+import dev.halone.compositor.ChromePress
 import dev.halone.compositor.FreeCursor
+import dev.halone.compositor.HitPart
 import dev.halone.compositor.PanelScene
 import dev.halone.desktop.compositor.render.DesktopPanel
 import dev.halone.glasses.math.Vec3
@@ -15,17 +17,15 @@ import kotlin.math.sin
  * whichever producer panel is under it.
  */
 class InputRouter(
-    private val host: ProducerHost,
+    private val host: ProducerHost?,
     private val scene: PanelScene<DesktopPanel>,
+    chromeActions: ChromePress.Actions<DesktopPanel>,
 ) {
     private val cursor = FreeCursor()
+    private val chrome = ChromePress(scene, chromeActions)
 
     val yawRadians: Float get() = cursor.yawRadians
     val pitchRadians: Float get() = cursor.pitchRadians
-
-    /** Where the pointer last met a panel, for drawing the cursor; null when it is over nothing. */
-    var hitDistanceMetres: Float? = null
-        private set
 
     private var hovered: Int? = null
     private var focused: Int? = null
@@ -73,6 +73,10 @@ class InputRouter(
     fun move(dx: Double, dy: Double, modifiers: Int) {
         val right = (dx * degreesPerCount).toFloat()
         val up = (-dy * degreesPerCount).toFloat()
+        if (chrome.active) {
+            cursor.moveBy(right, up, scene)
+            return
+        }
         if (holdingStill) {
             heldRight += right
             heldUp += up
@@ -86,32 +90,35 @@ class InputRouter(
         hover(modifiers)
     }
 
-    /**
-     * Keeps the cursor inside the panels as they move, and updates where it
-     * meets the scene for drawing; tells no producer. Every frame.
-     */
-    fun refreshHit() {
-        cursor.clampTo(scene)
-        hitDistanceMetres = scene.hitTest(direction)?.distanceMetres
-    }
+    /** Keeps the cursor inside the panels as they move. Every frame. */
+    fun clamp() = cursor.clampTo(scene)
 
     private fun hover(modifiers: Int) {
-        val hit = scene.hitTest(direction)
+        val hit = scene.hitTest(direction)?.takeIf { it.part == HitPart.CONTENT }
         val index = hit?.panel?.producerIndex()
-        hitDistanceMetres = hit?.distanceMetres
-        hovered?.takeIf { it != index }?.let { host.input(it, ProducerHost.INPUT_LEAVE, 0f, 0f) }
+        hovered?.takeIf { it != index }?.let { host?.input(it, ProducerHost.INPUT_LEAVE, 0f, 0f) }
         hovered = index
         if (hit != null && index != null) {
-            host.input(index, ProducerHost.INPUT_MOVE, hit.hit.x, hit.hit.y, button = buttons, modifiers = macFlags(modifiers))
+            host?.input(index, ProducerHost.INPUT_MOVE, hit.hit.x, hit.hit.y, button = buttons, modifiers = macFlags(modifiers))
         }
     }
 
-    fun button(button: Int, pressed: Boolean, modifiers: Int, now: Double) {
+    fun button(button: Int, pressed: Boolean, modifiers: Int, now: Double, headYawRadians: Float) {
         holdingStill = pressed && button == 0
         heldRight = 0f
         heldUp = 0f
         heldTravel = 0f
-        val hit = scene.hitTest(direction) ?: return
+        val hit = scene.hitTest(direction)
+        if (button == 0) {
+            if (!pressed && chrome.release(direction, hit, headYawRadians)) return
+            if (pressed && hit != null && hit.part != HitPart.CONTENT) {
+                holdingStill = false
+                chrome.press(hit, direction)
+                return
+            }
+        }
+        if (hit == null || hit.part != HitPart.CONTENT) return
+        val host = host ?: return
         val index = hit.panel.producerIndex() ?: return
         val mask = 1 shl button
         if (pressed) {
@@ -128,8 +135,9 @@ class InputRouter(
     }
 
     fun scroll(dx: Double, dy: Double, modifiers: Int) {
-        val hit = scene.hitTest(direction) ?: return
+        val hit = scene.hitTest(direction)?.takeIf { it.part == HitPart.CONTENT } ?: return
         val index = hit.panel.producerIndex() ?: return
+        val host = host ?: return
         host.input(index, ProducerHost.INPUT_WHEEL, hit.hit.x, hit.hit.y,
             dx = (dx * WHEEL_PIXELS).toFloat(), dy = (dy * WHEEL_PIXELS).toFloat(), modifiers = macFlags(modifiers))
     }
@@ -147,7 +155,7 @@ class InputRouter(
                 if (special != null || glfwGetKeyName(key, scancode) == null || modifiers and (GLFW_MOD_CONTROL or GLFW_MOD_SUPER) != 0) {
                     val character = special ?: glfwGetKeyName(key, scancode)?.firstOrNull()?.code ?: 0
                     typed[scancode] = character
-                    host.input(target, ProducerHost.INPUT_KEY_DOWN, 0f, 0f, modifiers = macFlags(modifiers),
+                    host?.input(target, ProducerHost.INPUT_KEY_DOWN, 0f, 0f, modifiers = macFlags(modifiers),
                         keyCode = scancode, character = character, unmodified = character)
                 } else {
                     pendingKeyCode = scancode
@@ -155,7 +163,7 @@ class InputRouter(
             }
             GLFW_RELEASE -> {
                 val character = typed.remove(scancode) ?: 0
-                host.input(target, ProducerHost.INPUT_KEY_UP, 0f, 0f, modifiers = macFlags(modifiers),
+                host?.input(target, ProducerHost.INPUT_KEY_UP, 0f, 0f, modifiers = macFlags(modifiers),
                     keyCode = scancode, character = character, unmodified = character)
             }
         }
@@ -166,7 +174,7 @@ class InputRouter(
         val keyCode = pendingKeyCode ?: return
         pendingKeyCode = null
         typed[keyCode] = codepoint
-        host.input(target, ProducerHost.INPUT_KEY_DOWN, 0f, 0f, modifiers = macFlags(modifiers),
+        host?.input(target, ProducerHost.INPUT_KEY_DOWN, 0f, 0f, modifiers = macFlags(modifiers),
             keyCode = keyCode, character = codepoint, unmodified = codepoint)
     }
 
