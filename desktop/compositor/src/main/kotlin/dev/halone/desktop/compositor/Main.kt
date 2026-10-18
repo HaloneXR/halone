@@ -212,10 +212,10 @@ fun main(args: Array<String>) {
     compositor.stereo = stereo
     println("device: ${vk.deviceName}, Vulkan ${vk.versionString()}, vertical FOV %.1f°".format(verticalFov))
     if (options.noPresentWait) loop.presentWaitEnabled = false
-    // RADV (Mesa 26.2.3, KDE Wayland) segfaults inside vkWaitForPresentKHR on the
-    // first wait, even for a frame presented successfully. HALONE_PRESENT_WAIT=1
-    // forces it back on, to check a newer Mesa.
-    if (lease == null && glfwGetPlatform() == GLFW_PLATFORM_WAYLAND && System.getenv("HALONE_PRESENT_WAIT") != "1") loop.presentWaitEnabled = false
+    // RADV (Mesa 26.2.3) segfaults inside vkWaitForPresentKHR on the first wait, on
+    // KDE Wayland and on a leased display alike. HALONE_PRESENT_WAIT=1 forces it back
+    // on, to check a newer Mesa.
+    if ("RADV" in vk.deviceName && System.getenv("HALONE_PRESENT_WAIT") != "1") loop.presentWaitEnabled = false
     println("presentation: display timing ${vk.hasDisplayTiming}, present id ${vk.hasPresentId}, present wait ${vk.hasPresentWait}" +
         if (vk.hasPresentWait && !loop.presentWaitEnabled) " (turned off)" else "")
     stackPush().use { stack ->
