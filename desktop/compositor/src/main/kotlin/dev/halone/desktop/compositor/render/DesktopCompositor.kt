@@ -11,6 +11,7 @@ import dev.halone.glasses.math.Quaternion
 import org.lwjgl.system.MemoryStack.stackPush
 import org.lwjgl.vulkan.VK13.*
 import org.lwjgl.vulkan.VkClearValue
+import org.lwjgl.vulkan.VkCommandBuffer
 import org.lwjgl.vulkan.VkRect2D
 import org.lwjgl.vulkan.VkRenderingAttachmentInfo
 import org.lwjgl.vulkan.VkRenderingInfo
@@ -32,6 +33,8 @@ class DesktopPanel(
  * follow, then draws its panels in draw order with the same model matrices.
  */
 class DesktopCompositor(private val vk: VulkanContext, colorFormat: Int, val verticalFovDegrees: Float) : AutoCloseable {
+    var stereo: StereoRenderer? = null
+
     val scene = PanelScene<DesktopPanel>()
     private val panels = PanelPipeline(vk, colorFormat)
     private val viewProjection = FloatArray(16)
@@ -41,7 +44,12 @@ class DesktopCompositor(private val vk: VulkanContext, colorFormat: Int, val ver
         scene.advanceFollow(Math.toRadians(yawDegrees.toDouble()).toFloat(), dt)
     }
 
-    fun record(target: FrameTarget, head: Quaternion) = stackPush().use { stack ->
+    fun record(target: FrameTarget, head: Quaternion) {
+        val stereo = stereo
+        if (stereo != null) stereo.record(target, head, ::drawScene) else recordMono(target, head)
+    }
+
+    private fun recordMono(target: FrameTarget, head: Quaternion) = stackPush().use { stack ->
         val near = 0.5f
         val top = near * tan(Math.toRadians(verticalFovDegrees / 2.0)).toFloat()
         val right = top * target.width / target.height
@@ -61,19 +69,27 @@ class DesktopCompositor(private val vk: VulkanContext, colorFormat: Int, val ver
         vkCmdSetViewport(target.commands, 0, VkViewport.calloc(1, stack).width(target.width.toFloat()).height(target.height.toFloat()).maxDepth(1f))
         vkCmdSetScissor(target.commands, 0, VkRect2D.calloc(1, stack).also { it[0].extent().set(target.width, target.height) })
 
-        panels.bind(target.commands)
+        drawScene(target.commands, viewProjection)
+        vkCmdEndRendering(target.commands)
+    }
+
+    /** The scene's panels in draw order, through [viewProjection], into whatever rendering is open. */
+    fun drawScene(cmd: VkCommandBuffer, viewProjection: FloatArray) {
+        panels.bind(cmd)
         for (panel in scene.drawOrder()) {
             val pose = panel.pose
             var model = Mat4.multiply(Mat4.rotationY(pose.yawRadians), Mat4.rotationX(pose.pitchRadians))
             model = Mat4.multiply(model, Mat4.translation(0f, 0f, -pose.distanceMetres))
             model = Mat4.multiply(model, Mat4.scale(pose.widthMetres, pose.heightMetres, 1f))
             val mvp = Mat4.multiply(viewProjection, model)
-            panels.draw(target.commands, panel.texture, mvp, panel.widthPx.toFloat(), panel.heightPx.toFloat(), panel.cornerRadiusPx, 1f)
+            panels.draw(cmd, panel.texture, mvp, panel.widthPx.toFloat(), panel.heightPx.toFloat(), panel.cornerRadiusPx, 1f)
         }
-        vkCmdEndRendering(target.commands)
     }
 
     fun forget(texture: TextureSource) = panels.forget(texture.view)
 
-    override fun close() = panels.close()
+    override fun close() {
+        stereo?.close()
+        panels.close()
+    }
 }

@@ -26,6 +26,7 @@ val lwjglNatives = when {
 
 dependencies {
     implementation(project(":core-glasses"))
+    implementation(project(":core-compositor-common"))
     implementation(project(":desktop-glasses"))
     implementation(libs.lwjgl)
     implementation(libs.lwjgl.glfw)
