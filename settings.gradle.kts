@@ -41,3 +41,6 @@ listOf(
     include(":$name")
     project(":$name").projectDir = file("android/$name")
 }
+
+include(":desktop-glasses")
+project(":desktop-glasses").projectDir = file("desktop/glasses")

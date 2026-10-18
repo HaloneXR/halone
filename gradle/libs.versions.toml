@@ -15,6 +15,8 @@ androidxTestRunner = "1.7.0"
 espresso = "3.7.0"
 geckoview = "154.0.20260814215756"
 haloneSdk = "0.1.0"
+hid4java = "0.8.0"
+jna = "5.19.1"
 
 [libraries]
 halone-plugin-sdk = { group = "dev.halone", name = "plugin-sdk", version.ref = "haloneSdk" }
@@ -29,6 +31,8 @@ geckoview = { group = "org.mozilla.geckoview", name = "geckoview", version.ref =
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 json = { group = "org.json", name = "json", version.ref = "json" }
+hid4java = { group = "org.hid4java", name = "hid4java", version.ref = "hid4java" }
+jna = { group = "net.java.dev.jna", name = "jna", version.ref = "jna" }
 androidx-test-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxTestJunit" }
 androidx-test-runner = { group = "androidx.test", name = "runner", version.ref = "androidxTestRunner" }
 androidx-test-espresso = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espresso" }
