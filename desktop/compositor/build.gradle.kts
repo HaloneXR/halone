@@ -1,3 +1,5 @@
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -50,9 +52,21 @@ val nativeBridgeUnix = tasks.register<Exec>("nativeBridgeUnix") {
     )
     doFirst { output.get().asFile.parentFile.mkdirs() }
 }
-sourceSets.main { resources.srcDir(layout.buildDirectory.dir("native")) }
+// Versioned by date as the Android app is: 2026.10.11-alpha. Pass -Phalone.date=2026.10.11 to pin one.
+val haloneVersion = ((findProperty("halone.date") as String?)
+    ?: LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy.MM.dd"))) + "-alpha"
+val writeVersion = tasks.register("writeVersion") {
+    val output = layout.buildDirectory.file("generated/version/halone-version.txt")
+    inputs.property("version", haloneVersion)
+    outputs.file(output)
+    doLast { output.get().asFile.apply { parentFile.mkdirs() }.writeText(haloneVersion) }
+}
+sourceSets.main {
+    resources.srcDir(layout.buildDirectory.dir("native"))
+    resources.srcDir(layout.buildDirectory.dir("generated/version"))
+}
 tasks.processResources {
-    dependsOn(nativeBridge, nativeBridgeUnix)
+    dependsOn(nativeBridge, nativeBridgeUnix, writeVersion)
     from(rootProject.layout.projectDirectory.dir("android/app/src/main/assets/cursors")) { into("cursors") }
 }
 

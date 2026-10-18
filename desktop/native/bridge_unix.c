@@ -208,7 +208,7 @@ static void copy_text(char *to, size_t size, const char *from) {
 }
 
 int32_t halone_send_open(int32_t connection, uint32_t panel, uint32_t width, uint32_t height, const char *url,
-                         const char *origin, const char *script) {
+                         const char *origin, const char *script, const char *root) {
     spike_open o;
     memset(&o, 0, sizeof o);
     o.id = SPIKE_MSG_OPEN;
@@ -218,6 +218,7 @@ int32_t halone_send_open(int32_t connection, uint32_t panel, uint32_t width, uin
     copy_text(o.url, sizeof o.url, url);
     copy_text(o.origin, sizeof o.origin, origin);
     copy_text(o.script, sizeof o.script, script);
+    copy_text(o.root, sizeof o.root, root);
     return send_packet(connection, &o, sizeof o);
 }
 

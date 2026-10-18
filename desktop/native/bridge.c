@@ -146,7 +146,7 @@ static void copy_text(char *to, size_t size, const char *from) {
 }
 
 int32_t halone_send_open(uint32_t producer, uint32_t panel, uint32_t width, uint32_t height, const char *url,
-                         const char *origin, const char *script) {
+                         const char *origin, const char *script, const char *root) {
     spike_open o;
     memset(&o, 0, sizeof o);
     o.header.msgh_bits = MACH_MSGH_BITS_SET(MACH_MSG_TYPE_COPY_SEND, 0, 0, 0);
@@ -159,6 +159,7 @@ int32_t halone_send_open(uint32_t producer, uint32_t panel, uint32_t width, uint
     copy_text(o.url, sizeof o.url, url);
     copy_text(o.origin, sizeof o.origin, origin);
     copy_text(o.script, sizeof o.script, script);
+    copy_text(o.root, sizeof o.root, root);
     return mach_msg(&o.header, MACH_SEND_MSG | MACH_SEND_TIMEOUT, sizeof o, 0, MACH_PORT_NULL, 0, MACH_PORT_NULL);
 }
 

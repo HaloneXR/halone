@@ -149,11 +149,12 @@ class ProducerHost(
 
     /**
      * Opens a panel on [url], answering its number; [onPanelReady] follows once
-     * its surfaces arrive. [script] runs after each load of a page on [origin].
+     * its surfaces arrive. [script] runs after each load of a page on [origin],
+     * which [root] serves when given.
      */
-    fun open(widthPx: Int, heightPx: Int, url: String, origin: String = "", script: String = ""): Int {
+    fun open(widthPx: Int, heightPx: Int, url: String, origin: String = "", script: String = "", root: File? = null): Int {
         val panel = nextPanel++
-        val send = { transport.open(panel, widthPx, heightPx, url, origin, script) }
+        val send = { transport.open(panel, widthPx, heightPx, url, origin, script, root?.absolutePath.orEmpty()) }
         if (transport.connected && waiting.isEmpty()) send() else waiting += send
         return panel
     }

@@ -203,6 +203,13 @@ inline void serveWebRoot(const std::string &root) {
     if (!root.empty()) CefRegisterSchemeHandlerFactory("https", "halone.local", new WebRootHandlerFactory(root));
 }
 
+// A Halone package's own origin, https://<id>.apps.halone.local, served from its files.
+inline void serveOrigin(const std::string &origin, const std::string &root) {
+    const std::string https = "https://";
+    if (root.empty() || origin.compare(0, https.size(), https) != 0) return;
+    CefRegisterSchemeHandlerFactory("https", origin.substr(https.size()), new WebRootHandlerFactory(root));
+}
+
 /**
  * The bridge is a WebSocket to the compositor on 127.0.0.1, which Local Network
  * Access blocks without asking in a windowless browser. Only the origin the

@@ -270,9 +270,17 @@ settings and shortcuts. The simulator's dev server is a reference for several.
     `core-shell`, takes GLFW keys on the desktop. Keys go to the scene's key
     target as on Android, and the producer gives that page the keyboard
     focus.
-  - Left: media; web windows' browser chrome; Halone package apps and their
-    origins; `halone dev`; the Linux producer's OPEN, CLOSE, web root and
-    script.
+  - Halone package apps: installed ones are served from their files on their
+    own origin, `https://<id>.apps.halone.local`, as on Android; dev apps
+    load from their dev server with the bridge on its origin.
+  - `halone dev`: `DevCommands`, moved out of Android's `DevReceiver` into
+    `core-shell`, answers on `POST /dev` on 127.0.0.1. The CLI finds the port
+    and a bearer token in `dev.json` in the app data folder, readable by the
+    user alone; requests with a browser `Origin` are refused. Checked with a
+    probe app over the dev and install commands.
+  - The Linux producer has OPEN, CLOSE, the web root, the bridge script and
+    FOCUS (from the Linux session).
+  - Left: media; web windows' browser chrome; the CLI's `--desktop` target.
 
 ### 6. Plugin contract
 

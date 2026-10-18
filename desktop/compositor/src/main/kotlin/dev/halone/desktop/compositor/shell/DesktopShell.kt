@@ -7,13 +7,18 @@ import dev.halone.desktop.compositor.producer.ProducerHost
 import dev.halone.desktop.compositor.render.DesktopCompositor
 import dev.halone.desktop.compositor.render.DesktopPanel
 import dev.halone.desktop.compositor.vk.TextureSource
+import dev.halone.desktop.shell.AppData
 import dev.halone.desktop.shell.BridgeSockets
+import dev.halone.desktop.shell.DevServer
 import dev.halone.desktop.shell.DesktopFolders
 import dev.halone.desktop.shell.DesktopStorageAccess
 import dev.halone.desktop.shell.DesktopThumbnails
 import dev.halone.desktop.shell.FileStore
 import dev.halone.shell.AppInfo
 import dev.halone.shell.BridgeHost
+import dev.halone.shell.DevCommands
+import dev.halone.shell.InstalledApp
+import dev.halone.shell.PackageApps
 import dev.halone.shell.FileServer
 import dev.halone.shell.KeyChord
 import dev.halone.shell.SharedFiles
@@ -64,7 +69,14 @@ class DesktopShell(
         systemApps = AppInfo.parseRegistry(File(webRoot, REGISTRY).readText()),
         settings = ShellSettings(FileStore("settings.json", io), File(webRoot, ShellSettings.SCHEMA_ASSET).readText()),
         platform = this,
+        packageApps = PackageApps(File(AppData.dir, "apps"), FileStore("packages.json", io)),
     )
+
+    private val devCommands = DevCommands(
+        shell, version, source = "cli", devServerHint = "on this machine",
+        background = { background.execute(it) }, onMain = ::post, log = log,
+    )
+    private val devServer = DevServer(devCommands::run, ::post, log)
 
     private val files = SharedFiles(DesktopFolders::roots, DesktopStorageAccess)
     private val fileServer = FileServer(files, thumbnailer = DesktopThumbnails()::of, log = log).also { files.urlBase = it.base }
@@ -144,12 +156,12 @@ class DesktopShell(
         queue += task
     }
 
-    /** A panel drawn by the producer, sized as Android sizes its windows; [origin] gets the bridge. */
-    private fun producerPanel(id: String, widthPx: Int, heightPx: Int, url: String, origin: String?): DesktopPanel {
+    /** A panel drawn by the producer, sized as Android sizes its windows; [origin] gets the bridge, and [root] serves it. */
+    private fun producerPanel(id: String, widthPx: Int, heightPx: Int, url: String, origin: String?, root: File? = null): DesktopPanel {
         val panel = DesktopPanel(id, widthPx, heightPx, NoTexture, PanelPose(distanceMetres = distance()))
         panel.fitToFov(verticalFovDegrees, fillFor(heightPx))
         val script = origin?.let { sockets.register(id, it) { channel -> bridge.connect(id, channel) } }.orEmpty()
-        val index = host.open(widthPx, heightPx, url, origin.orEmpty(), script)
+        val index = host.open(widthPx, heightPx, url, origin.orEmpty(), script, root)
         panel.producerIndex = index
         panel.onResizeContent = { width, height -> host.resize(index, width, height) }
         byProducer[index] = panel
@@ -169,6 +181,15 @@ class DesktopShell(
         panel.sizeLimits = SizeLimits.defaultFor(app.widthPx, app.heightPx)
         scene.open(panel)
         log("  shell: opened ${app.id} as $windowId")
+        return panel
+    }
+
+    override fun openPackageApp(windowId: String, app: InstalledApp, files: File?, url: String): DesktopPanel {
+        val origin = java.net.URI(url).let { "${it.scheme}://${it.rawAuthority}" }
+        val panel = producerPanel(windowId, app.manifest.widthPx, app.manifest.heightPx, url, origin, files)
+        panel.sizeLimits = SizeLimits.defaultFor(app.manifest.widthPx, app.manifest.heightPx)
+        scene.open(panel)
+        log("  shell: opened package ${app.id} as $windowId from $origin")
         return panel
     }
 
@@ -247,6 +268,7 @@ class DesktopShell(
     private fun fillFor(heightPx: Int) = PANEL_VERTICAL_FILL * heightPx / REFERENCE_HEIGHT_PX
 
     override fun close() {
+        devServer.close()
         fileServer.close()
         sockets.close()
         io.shutdown()

@@ -277,7 +277,7 @@ fun main(args: Array<String>) {
                 session?.tracker?.recenter()
                 compositor.scene.recentre()
             },
-            version = "desktop",
+            version = object {}.javaClass.getResource("/halone-version.txt")?.readText()?.trim() ?: "0.0.0-dev",
             deviceName = session?.device?.let { it.toString() } ?: "Desktop",
             log = ::println,
         )

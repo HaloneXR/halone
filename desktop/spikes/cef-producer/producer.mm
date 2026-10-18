@@ -69,6 +69,7 @@ struct Panel {
     bool resizing = false;
     std::string origin;
     std::string script;
+    std::string root;
     bool closing = false;
     producer::Window beginToPaint;
     producer::Window blit;
@@ -293,7 +294,9 @@ private:
     IMPLEMENT_REFCOUNTING(PanelClient);
 };
 
+
 void createBrowser(Panel *p) {
+    producer::serveOrigin(p->origin, p->root);
     producer::allowBridge(p->origin, p->script);
     CefWindowInfo info;
     info.SetAsWindowless(nullptr);
@@ -369,6 +372,7 @@ void handleOpen(const spike_open &o) {
     p->url = producer::text(o.url, sizeof o.url);
     p->origin = producer::text(o.origin, sizeof o.origin);
     p->script = producer::text(o.script, sizeof o.script);
+    p->root = producer::text(o.root, sizeof o.root);
     gPanels[p->number] = p;
     allocateSurfaces(p);
     sendHello(p);

@@ -58,8 +58,8 @@ interface ProducerTransport : AutoCloseable {
 
     fun resize(panel: Int, width: Int, height: Int)
 
-    /** A new panel on [url]; [script] runs after each load of a page on [origin]. */
-    fun open(panel: Int, width: Int, height: Int, url: String, origin: String, script: String)
+    /** A new panel on [url]; [script] runs after each load of a page on [origin], which [root] serves when not empty. */
+    fun open(panel: Int, width: Int, height: Int, url: String, origin: String, script: String, root: String)
 
     fun closePanel(panel: Int)
 

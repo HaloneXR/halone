@@ -46,7 +46,7 @@ interface Bridge : Library {
         button: Int, clicks: Int, modifiers: Int, keyCode: Int, character: Int, unmodified: Int,
     ): Int
     fun halone_send_resize(producer: Int, panel: Int, width: Int, height: Int): Int
-    fun halone_send_open(producer: Int, panel: Int, width: Int, height: Int, url: String, origin: String, script: String): Int
+    fun halone_send_open(producer: Int, panel: Int, width: Int, height: Int, url: String, origin: String, script: String, root: String): Int
     fun halone_send_close(producer: Int, panel: Int): Int
     fun halone_surface_use(surface: Long, delta: Int)
     fun halone_surface_release(surface: Long)

@@ -23,6 +23,7 @@ enum {
 #define SPIKE_URL_BYTES 2048
 #define SPIKE_ORIGIN_BYTES 256
 #define SPIKE_SCRIPT_BYTES 4096
+#define SPIKE_PATH_BYTES 1024
 
 enum {
     SPIKE_INPUT_MOVE = 1,
@@ -93,6 +94,7 @@ typedef struct {
 /*
  * A new panel showing [url]; a HELLO with its surfaces answers it. After each
  * load of a page on [origin], [script] runs in it; an empty script runs nothing.
+ * A [root] serves [origin] from that folder, as https://halone.local/ is served.
  */
 typedef struct {
     mach_msg_header_t header;
@@ -102,6 +104,7 @@ typedef struct {
     char url[SPIKE_URL_BYTES];
     char origin[SPIKE_ORIGIN_BYTES];
     char script[SPIKE_SCRIPT_BYTES];
+    char root[SPIKE_PATH_BYTES];
 } spike_open;
 
 typedef struct {
@@ -251,6 +254,7 @@ typedef struct {
     char url[SPIKE_URL_BYTES];
     char origin[SPIKE_ORIGIN_BYTES];
     char script[SPIKE_SCRIPT_BYTES];
+    char root[SPIKE_PATH_BYTES];
 } spike_open;
 
 typedef struct {

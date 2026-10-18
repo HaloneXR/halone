@@ -72,7 +72,7 @@ interface UnixBridge : Library {
     ): Int
     fun halone_send_resize(connection: Int, panel: Int, width: Int, height: Int): Int
     fun halone_send_release(connection: Int, panel: Int, index: Int, generation: Int): Int
-    fun halone_send_open(connection: Int, panel: Int, width: Int, height: Int, url: String, origin: String, script: String): Int
+    fun halone_send_open(connection: Int, panel: Int, width: Int, height: Int, url: String, origin: String, script: String, root: String): Int
     fun halone_send_close(connection: Int, panel: Int): Int
     fun halone_close(fd: Int)
 
@@ -136,8 +136,8 @@ class UnixTransport : ProducerTransport {
         if (connection >= 0) bridge.halone_send_resize(connection, panel, width, height)
     }
 
-    override fun open(panel: Int, width: Int, height: Int, url: String, origin: String, script: String) {
-        if (connection >= 0) bridge.halone_send_open(connection, panel, width, height, url, origin, script)
+    override fun open(panel: Int, width: Int, height: Int, url: String, origin: String, script: String, root: String) {
+        if (connection >= 0) bridge.halone_send_open(connection, panel, width, height, url, origin, script, root)
     }
 
     override fun closePanel(panel: Int) {

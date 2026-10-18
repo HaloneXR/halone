@@ -59,8 +59,8 @@ class MachTransport : ProducerTransport {
         if (producerPort != 0) bridge.halone_send_resize(producerPort, panel, width, height)
     }
 
-    override fun open(panel: Int, width: Int, height: Int, url: String, origin: String, script: String) {
-        if (producerPort != 0) bridge.halone_send_open(producerPort, panel, width, height, url, origin, script)
+    override fun open(panel: Int, width: Int, height: Int, url: String, origin: String, script: String, root: String) {
+        if (producerPort != 0) bridge.halone_send_open(producerPort, panel, width, height, url, origin, script, root)
     }
 
     override fun closePanel(panel: Int) {
