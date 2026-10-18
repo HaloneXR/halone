@@ -21,6 +21,14 @@ class FrameAim(private val clock: DisplayClock, private val tracker: HeadTracker
     /** The glasses light a row this long after the refresh that carries it; StereoCompositor's tuned value. */
     var scanoutOffsetMs = 5f
 
+    /**
+     * Scales the span between the first and last rows' poses, as
+     * StereoCompositor.scanoutCompensation does: 1 assumes the panel scans a
+     * whole refresh top row first, 0 turns the shear correction off, and
+     * negative values invert it. The display does not say which is right.
+     */
+    var scanoutCompensation = 1f
+
     private val ahead = ArrayDeque<Int>()
     private var anchorHostNs = 0L
     private var periodNs = 0.0
@@ -50,7 +58,7 @@ class FrameAim(private val clock: DisplayClock, private val tracker: HeadTracker
 
     /** The pose to draw at: mid-scanout, so the warp has half a refresh to reach either way. */
     fun renderPose(photonHostNs: Long): HeadPose {
-        val midScanout = firstRowDeviceNs(photonHostNs) + (periodNs / 2).toLong()
+        val midScanout = firstRowDeviceNs(photonHostNs) + (periodNs * scanoutCompensation / 2).toLong()
         return tracker.poseAfterMs((midScanout - tracker.pose.timestampNs) / 1e6f)
     }
 
@@ -58,7 +66,7 @@ class FrameAim(private val clock: DisplayClock, private val tracker: HeadTracker
     fun warpPoses(photonHostNs: Long): Pair<Quaternion, Quaternion> {
         val latest = tracker.pose
         val firstMs = (firstRowDeviceNs(photonHostNs) - latest.timestampNs) / 1e6f
-        val lastMs = firstMs + (periodNs / 1e6).toFloat()
+        val lastMs = firstMs + (periodNs / 1e6).toFloat() * scanoutCompensation
         return tracker.poseAfterMs(firstMs).orientation to tracker.poseAfterMs(lastMs).orientation
     }
 

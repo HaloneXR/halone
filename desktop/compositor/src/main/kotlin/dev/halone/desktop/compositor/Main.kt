@@ -25,7 +25,14 @@ private const val MOUSE_DEGREES_PER_PIXEL = 0.08f
 private const val PACE_TIMEOUT_NS = 100_000_000L
 
 /** How frames are paced, aimed and warped. */
-private data class Condition(val name: String, val images: Int?, val pace: Boolean, val aimed: Boolean, val reproject: Boolean)
+private data class Condition(
+    val name: String,
+    val images: Int?,
+    val pace: Boolean,
+    val aimed: Boolean,
+    val reproject: Boolean,
+    val scan: Float = 1f,
+)
 
 /** What the first wear check ran: three images, unpaced, the fixed 16.6 ms prediction and no warp. */
 private val BASELINE = Condition("baseline", images = 3, pace = false, aimed = false, reproject = false)
@@ -42,7 +49,9 @@ private class Options(args: Array<String>) {
         else -> SMOOTH
     }
     val ab = "--ab" in args
+    val scanSweep = "--scan-sweep" in args
     val reveal = value(args, "--reveal")
+    val abSeconds = value(args, "--ab-interval")?.toDouble() ?: 8.0
 
     private fun value(args: Array<String>, name: String) = args.indexOf(name).takeIf { it >= 0 }?.let { args.getOrNull(it + 1) }
 }
@@ -80,12 +89,19 @@ fun main(args: Array<String>) {
         glfwWindowHint(GLFW_AUTO_ICONIFY, GLFW_FALSE)
         println("monitor: ${glfwGetMonitorName(monitor)} ${video.width()}x${video.height()} @${video.refreshRate()}")
         window = glfwCreateWindow(video.width(), video.height(), "Halone", monitor, 0)
+        glfwFocusWindow(window)
     } else {
         window = glfwCreateWindow(1600, 900, "Halone", 0, 0)
     }
 
-    val abLetters = if (options.ab) listOf(BASELINE, SMOOTH).shuffled() else emptyList()
-    var condition = if (options.ab) abLetters[0] else options.condition
+    val blind = options.ab || options.scanSweep
+    val abLetters = when {
+        options.scanSweep -> listOf(1f, 0f, -1f).map { SMOOTH.copy(name = "scan %+.0f".format(it), scan = it) }.shuffled()
+        options.ab -> listOf(BASELINE, SMOOTH).shuffled()
+        else -> emptyList()
+    }
+    fun letter(index: Int) = ('A' + index).toString()
+    var condition = if (blind) abLetters[0] else options.condition
 
     val optics = session?.device?.optics ?: referenceOptics()
     val vk = VulkanContext(window)
@@ -128,9 +144,12 @@ fun main(args: Array<String>) {
     }
     repeat(3) { openPanel() }
 
+    val aim = session?.displayClock?.let { FrameAim(it, session.tracker) }
+
     fun apply(next: Condition, letter: String?) {
         condition = next
         loop.setImages(next.images)
+        aim?.scanoutCompensation = next.scan
         if (letter != null) {
             val panel = compositor.scene.find("panel-1") ?: return
             vkDeviceWaitIdle(vk.device)
@@ -142,9 +161,9 @@ fun main(args: Array<String>) {
             println("condition ${next.name} active")
         }
     }
-    apply(condition, if (options.ab) "A" else null)
+    apply(condition, if (blind) "A" else null)
+    var abShowing = 0
 
-    val aim = session?.displayClock?.let { FrameAim(it, session.tracker) }
     val probe = TimingProbe(session?.displayClock)
     var refreshNs = loop.refreshDurationNs()
     val sampleById = HashMap<Long, Long>()
@@ -191,8 +210,13 @@ fun main(args: Array<String>) {
             }
             GLFW_KEY_N -> openPanel()
             GLFW_KEY_BACKSPACE -> closePanel()
-            GLFW_KEY_1 -> if (options.ab) apply(abLetters[0], "A")
-            GLFW_KEY_2 -> if (options.ab) apply(abLetters[1], "B")
+            in GLFW_KEY_1..GLFW_KEY_9 -> {
+                val index = key - GLFW_KEY_1
+                if (blind && index < abLetters.size) {
+                    abShowing = index
+                    apply(abLetters[index], letter(index))
+                }
+            }
         }
     }
 
@@ -203,7 +227,13 @@ fun main(args: Array<String>) {
     var frames = 0
     var worstMs = 0.0
     var paceWaitNs = 0L
+    var abSwitchAt = start + options.abSeconds
     while (!glfwWindowShouldClose(window)) {
+        if (blind && glfwGetTime() >= abSwitchAt) {
+            abShowing = (abShowing + 1) % abLetters.size
+            apply(abLetters[abShowing], letter(abShowing))
+            abSwitchAt = glfwGetTime() + options.abSeconds
+        }
         if (condition.pace) {
             val waitStart = System.nanoTime()
             loop.waitForPresent(loop.lastPresentId, PACE_TIMEOUT_NS)
@@ -243,8 +273,8 @@ fun main(args: Array<String>) {
             println("%.1f fps, worst frame %.1f ms, head yaw %.1f° pitch %.1f°, refreshes ahead %s, panels at %s".format(
                 frames / (now - reportAt + 2), worstMs, headYaw, headPitch, aim?.refreshesAhead ?: "-",
                 compositor.scene.panels.joinToString { "%.1f°".format(Math.toDegrees(it.pose.yawRadians.toDouble())) }))
-            if (!options.ab) println(probe.report(refreshNs)) else probe.report(refreshNs)
-            if (!options.ab) println("blocking: pace wait %.2f, prime %.2f, submit %.2f, present %.2f ms per frame".format(
+            if (!blind) println(probe.report(refreshNs)) else probe.report(refreshNs)
+            if (!blind) println("blocking: pace wait %.2f, prime %.2f, submit %.2f, present %.2f ms per frame".format(
                 paceWaitNs / 1e6 / maxOf(frames, 1), loop.primeBlockNs / 1e6 / maxOf(frames, 1),
                 loop.submitBlockNs / 1e6 / maxOf(frames, 1), loop.presentBlockNs / 1e6 / maxOf(frames, 1)))
             loop.primeBlockNs = 0
@@ -258,8 +288,8 @@ fun main(args: Array<String>) {
         if (options.seconds != null && now - start >= options.seconds) break
     }
 
-    if (options.ab) {
-        val mapping = "A = ${abLetters[0].name}, B = ${abLetters[1].name}\n"
+    if (blind) {
+        val mapping = abLetters.indices.joinToString(", ", postfix = "\n") { "${letter(it)} = ${abLetters[it].name}" }
         options.reveal?.let { File(it).writeText(mapping) } ?: println("reveal: $mapping")
     }
     vkDeviceWaitIdle(vk.device)
