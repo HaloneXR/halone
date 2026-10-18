@@ -157,7 +157,7 @@ is safe. `ReplayHidTransport` also records everything written, so you can assert
 your driver sends the right command bytes.
 
 ```sh
-./gradlew :core-glasses:testDebugUnitTest
+./gradlew :core-glasses:test
 ```
 
 ## Step 7: verify on hardware

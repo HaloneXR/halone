@@ -56,6 +56,7 @@ android {
 
 dependencies {
     implementation(project(":core-glasses"))
+    implementation(project(":core-glasses-usb"))
     implementation(project(":core-display"))
     implementation(project(":core-compositor"))
     implementation(project(":engine-webview"))

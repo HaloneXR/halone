@@ -30,6 +30,7 @@ includeBuild("sdk/android")
 listOf(
     "core-scene",
     "core-glasses",
+    "core-glasses-usb",
     "core-display",
     "core-compositor",
     "engine-webview",

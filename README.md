@@ -13,7 +13,8 @@ Bug reports and pull requests are welcome.
 ## Layout
 
 ```
-android/core-glasses/    USB HID · IMU parse · fusion · prediction
+android/core-glasses/    IMU parse · fusion · prediction (plain JVM, no Android)
+android/core-glasses-usb/ Android USB HID transport and descriptor dump
 android/core-display/    display discovery · hotplug · mode switch · presentation
 android/core-compositor/ Panel/Scene model · per-eye render · follow · layout
 android/engine-webview/  VirtualDisplay + Presentation -> SurfaceTexture
