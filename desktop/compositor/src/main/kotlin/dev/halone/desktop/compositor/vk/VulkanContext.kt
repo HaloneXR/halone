@@ -3,7 +3,11 @@ package dev.halone.desktop.compositor.vk
 import org.lwjgl.PointerBuffer
 import org.lwjgl.system.MemoryStack
 import org.lwjgl.system.MemoryStack.stackPush
+import org.lwjgl.vulkan.EXTExternalMemoryDmaBuf
+import org.lwjgl.vulkan.EXTImageDrmFormatModifier
 import org.lwjgl.vulkan.EXTMetalObjects
+import org.lwjgl.vulkan.EXTQueueFamilyForeign
+import org.lwjgl.vulkan.KHRExternalMemoryFd
 import org.lwjgl.vulkan.GOOGLEDisplayTiming
 import org.lwjgl.vulkan.KHRPortabilityEnumeration
 import org.lwjgl.vulkan.KHRPresentId
@@ -50,6 +54,7 @@ class VulkanContext(val output: Output) : AutoCloseable {
     val availableExtensions: Set<String>
 
     val hasMetalObjects get() = EXTMetalObjects.VK_EXT_METAL_OBJECTS_EXTENSION_NAME in enabledExtensions
+    val hasDmaBuf get() = DMA_BUF_EXTENSIONS.all { it in enabledExtensions }
     val hasDisplayTiming get() = GOOGLEDisplayTiming.VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME in enabledExtensions
     val hasPresentId get() = KHRPresentId.VK_KHR_PRESENT_ID_EXTENSION_NAME in enabledExtensions
     val hasPresentWait get() = KHRPresentWait.VK_KHR_PRESENT_WAIT_EXTENSION_NAME in enabledExtensions
@@ -113,7 +118,7 @@ class VulkanContext(val output: Output) : AutoCloseable {
                 GOOGLEDisplayTiming.VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME,
                 KHRPresentId.VK_KHR_PRESENT_ID_EXTENSION_NAME.takeIf { presentIdSupported },
                 KHRPresentWait.VK_KHR_PRESENT_WAIT_EXTENSION_NAME.takeIf { presentWaitSupported },
-            )
+            ) + DMA_BUF_EXTENSIONS + EXTQueueFamilyForeign.VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME
             enabledExtensions = wanted.filter { it in availableExtensions }.toSet()
 
             val priority = stack.floats(1f)
@@ -200,6 +205,12 @@ class VulkanContext(val output: Output) : AutoCloseable {
     }
 
     companion object {
+        private val DMA_BUF_EXTENSIONS = listOf(
+            KHRExternalMemoryFd.VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
+            EXTExternalMemoryDmaBuf.VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME,
+            EXTImageDrmFormatModifier.VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME,
+        )
+
         /** A real GPU before a software one: Linux usually lists llvmpipe beside the hardware. */
         private val DEVICE_PREFERENCE = listOf(
             VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU,

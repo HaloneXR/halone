@@ -37,9 +37,22 @@ val nativeBridge = tasks.register<Exec>("nativeBridge") {
     )
     doFirst { output.get().asFile.parentFile.mkdirs() }
 }
+val nativeBridgeUnix = tasks.register<Exec>("nativeBridgeUnix") {
+    val source = rootProject.layout.projectDirectory.dir("desktop/native")
+    val jnaArch = if (arch == "aarch64") "aarch64" else "x86-64"
+    val output = layout.buildDirectory.file("native/linux-$jnaArch/libhalone_bridge.so")
+    onlyIf { System.getProperty("os.name").lowercase().contains("linux") }
+    inputs.dir(source)
+    outputs.file(output)
+    commandLine(
+        "cc", "-shared", "-fPIC", "-O2", "-Wall", "-Werror",
+        "-o", output.get().asFile.path, source.file("bridge_unix.c").asFile.path,
+    )
+    doFirst { output.get().asFile.parentFile.mkdirs() }
+}
 sourceSets.main { resources.srcDir(layout.buildDirectory.dir("native")) }
 tasks.processResources {
-    dependsOn(nativeBridge)
+    dependsOn(nativeBridge, nativeBridgeUnix)
     from(rootProject.layout.projectDirectory.dir("android/app/src/main/assets/cursors")) { into("cursors") }
 }
 

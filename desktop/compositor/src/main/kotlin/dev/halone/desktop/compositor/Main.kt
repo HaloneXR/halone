@@ -99,7 +99,7 @@ private fun inputScript(): List<Pair<Double, (InputRouter, DesktopPanel) -> Unit
     steps += 1.0 to { r, p -> r.pointAt(p, 117f, 505f) }
     steps += 1.1 to { r, _ -> r.button(0, true, 0, 1.1, 0f) }
     steps += 1.15 to { r, _ -> r.button(0, false, 0, 1.15, 0f) }
-    val keys = listOf(GLFW_KEY_H to 4, GLFW_KEY_E to 14, GLFW_KEY_L to 37, GLFW_KEY_L to 37, GLFW_KEY_O to 31)
+    val keys = listOf(GLFW_KEY_H, GLFW_KEY_E, GLFW_KEY_L, GLFW_KEY_L, GLFW_KEY_O).map { it to glfwGetKeyScancode(it) }
     keys.forEachIndexed { i, (key, scancode) ->
         val at = 1.5 + i * 0.1
         steps += at to { r, _ -> r.key(key, scancode, GLFW_PRESS, 0); r.character("hello"[i].code, 0) }

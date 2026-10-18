@@ -2,7 +2,6 @@ package dev.halone.desktop.compositor.producer
 
 import dev.halone.compositor.CursorShape
 import dev.halone.desktop.compositor.vk.VulkanContext
-import com.sun.jna.ptr.IntByReference
 import java.io.File
 import java.util.concurrent.ConcurrentLinkedQueue
 
@@ -19,7 +18,7 @@ data class PanelSpec(val width: Int, val height: Int, val url: String) {
 }
 
 /**
- * One producer process and its panels: launches it, takes its IOSurfaces and
+ * One producer process and its panels: launches it, takes its surfaces and
  * frames, and sends it ticks and input. Everything but [receive] runs on the
  * render thread.
  */
@@ -30,18 +29,17 @@ class ProducerHost(
     marginMs: Float,
     log: File,
 ) : AutoCloseable {
-    private val bridge = Bridge.native
-    private val port: Int
+    private val transport = ProducerTransport.forThisPlatform()
     private val process: Process
-    private val events = ConcurrentLinkedQueue<Event>()
+    private val events = ConcurrentLinkedQueue<ProducerEvent>()
     @Volatile private var running = true
     private val receiver: Thread
-    private var producerPort = 0
     private val textures = HashMap<Int, ProducerTexture>()
-    private val pending = HashMap<Int, Event>()
-    private val resizes = HashMap<Int, Event>()
-    private val pendingResized = HashMap<Int, Event>()
-    private val held = ArrayDeque<Pair<Long, Long>>()
+    private val pending = HashMap<Int, ProducerEvent>()
+    private val resizes = HashMap<Int, ProducerEvent>()
+    private val pendingResized = HashMap<Int, ProducerEvent>()
+    private class Held(val panel: Int, val texture: ProducerTexture, val index: Int, val frame: Long)
+    private val held = ArrayDeque<Held>()
     private val retired = ArrayDeque<Pair<ProducerTexture, Long>>()
     private val newFrames = HashMap<Int, Int>()
 
@@ -57,38 +55,19 @@ class ProducerHost(
     /** Called on the render thread just before a replaced texture is closed. */
     var onTextureClosed: ((ProducerTexture) -> Unit)? = null
 
-    private data class Event(
-        val kind: Int, val panel: Int, val index: Int, val count: Int, val width: Int, val height: Int,
-        val reply: Int, val seq: Long, val readyNs: Long, val arrivedNs: Long, val surfaces: LongArray,
-        val name: String,
-    )
-
     init {
-        val service = "dev.halone.desktop.${ProcessHandle.current().pid()}"
-        val pPort = IntByReference()
-        val kr = bridge.halone_check_in(service, pPort)
-        check(kr == 0) { "bootstrap_check_in failed: $kr" }
-        port = pPort.value
         receiver = Thread({ receive() }, "producer-receive").apply { isDaemon = true; start() }
         process = ProcessBuilder(
-            executable,
-            "--spike-service=$service",
-            "--spike-panels=${specs.joinToString(",")}",
-            "--spike-margin=$marginMs",
-            "--spike-surfaces=$SURFACES",
+            listOf(executable) + transport.producerArguments + listOf(
+                "--spike-panels=${specs.joinToString(",")}",
+                "--spike-margin=$marginMs",
+                "--spike-surfaces=$SURFACES",
+            ),
         ).redirectErrorStream(true).redirectOutput(log).start()
     }
 
     private fun receive() {
-        val event = BridgeEvent()
-        while (running) {
-            if (bridge.halone_receive(port, event, 500) != 0 || event.kind == BridgeEvent.NONE) continue
-            events += Event(
-                event.kind, event.panel, event.index, event.count, event.width, event.height,
-                event.reply, event.seq, event.readyNs, event.arrivedNs, event.surfaces.copyOf(event.count),
-                event.name.takeWhile { it != 0.toByte() }.toByteArray().decodeToString(),
-            )
-        }
+        while (running) transport.receive(500)?.let { events += it }
     }
 
     /**
@@ -101,27 +80,33 @@ class ProducerHost(
         while (true) {
             val e = events.poll() ?: break
             when (e.kind) {
-                BridgeEvent.HELLO -> {
-                    if (producerPort == 0) producerPort = e.reply else bridge.halone_release_port(e.reply)
+                ProducerEvent.HELLO -> {
+                    val surfaces = e.surfaces!!
                     if (e.panel in textures) {
-                        resizes.put(e.panel, e)?.surfaces?.forEach(bridge::halone_surface_release)
+                        resizes.put(e.panel, e)?.surfaces?.release()
                         pendingResized.remove(e.panel)
                     } else {
-                        val texture = ProducerTexture(vk, e.width, e.height, e.surfaces)
+                        val texture = ProducerTexture(vk, surfaces)
                         textures[e.panel] = texture
                         onPanelReady?.invoke(e.panel, texture)
                     }
                 }
-                BridgeEvent.CURSOR -> onCursorChanged?.invoke(e.panel, CursorShape.ofCss(e.name))
-                BridgeEvent.FRAME -> {
+                ProducerEvent.CURSOR -> onCursorChanged?.invoke(e.panel, CursorShape.ofCss(e.cursor))
+                ProducerEvent.FRAME -> {
                     val into = if (e.panel in resizes) pendingResized else pending
-                    if ((into[e.panel]?.seq ?: -1) < e.seq) into[e.panel] = e
+                    val previous = into[e.panel]
+                    if ((previous?.seq ?: -1) < e.seq) {
+                        into[e.panel] = e
+                        previous?.let { transport.skipped(it.panel, it.index, it.generation) }
+                    } else {
+                        transport.skipped(e.panel, e.index, e.generation)
+                    }
                 }
             }
         }
         for (panel in resizes.keys.filter { it in pendingResized && !frozen(it) }) {
             val e = resizes.remove(panel)!!
-            val texture = ProducerTexture(vk, e.width, e.height, e.surfaces)
+            val texture = ProducerTexture(vk, e.surfaces!!)
             textures.put(panel, texture)?.let { retired.addLast(it to frame) }
             pending[panel] = pendingResized.remove(panel)!!
             onPanelResized?.invoke(panel, texture)
@@ -129,14 +114,15 @@ class ProducerHost(
         for (panel in pending.keys.filter { !frozen(it) }) {
             val e = pending.remove(panel)!!
             val texture = textures[panel] ?: continue
-            if (e.index !in texture.surfaces.indices || e.index == texture.current) continue
-            bridge.halone_surface_use(texture.surfaces[e.index], 1)
-            if (texture.current >= 0) held.addLast(texture.surfaces[texture.current] to frame)
+            if (e.index !in 0 until texture.surfaces.count || e.index == texture.current) continue
+            transport.showing(panel, texture, e.index)
+            if (texture.current >= 0) held.addLast(Held(panel, texture, texture.current, frame))
             texture.current = e.index
             newFrames[panel] = (newFrames[panel] ?: 0) + 1
         }
-        while (held.isNotEmpty() && frame - held.first().second > HOLD_FRAMES) {
-            bridge.halone_surface_use(held.removeFirst().first, -1)
+        while (held.isNotEmpty() && frame - held.first().frame > HOLD_FRAMES) {
+            val h = held.removeFirst()
+            transport.done(h.panel, h.texture, h.index)
         }
         while (retired.isNotEmpty() && frame - retired.first().second > HOLD_FRAMES) {
             close(retired.removeFirst().first)
@@ -144,25 +130,21 @@ class ProducerHost(
     }
 
     /** Asks the producer to lay [panel]'s page out at a new size; [onPanelResized] follows. */
-    fun resize(panel: Int, widthPx: Int, heightPx: Int) {
-        if (producerPort != 0) bridge.halone_send_resize(producerPort, panel, widthPx, heightPx)
-    }
+    fun resize(panel: Int, widthPx: Int, heightPx: Int) = transport.resize(panel, widthPx, heightPx)
 
     private fun close(texture: ProducerTexture) {
         onTextureClosed?.invoke(texture)
-        if (texture.current >= 0) bridge.halone_surface_use(texture.surfaces[texture.current], -1)
+        val panel = textures.entries.firstOrNull { it.value === texture }?.key ?: -1
+        if (texture.current >= 0) transport.done(panel, texture, texture.current)
         texture.close()
     }
 
     /** Asks the producer to begin its next frame so it is ready by [targetNs] (System.nanoTime). */
-    fun tick(targetNs: Long) {
-        if (producerPort != 0) bridge.halone_send_tick(producerPort, targetNs)
-    }
+    fun tick(targetNs: Long) = transport.tick(targetNs)
 
     fun input(panel: Int, kind: Int, x: Float, y: Float, dx: Float = 0f, dy: Float = 0f, button: Int = 0, clicks: Int = 0,
-              modifiers: Int = 0, keyCode: Int = 0, character: Int = 0, unmodified: Int = 0) {
-        if (producerPort != 0) bridge.halone_send_input(producerPort, panel, kind, x, y, dx, dy, button, clicks, modifiers, keyCode, character, unmodified)
-    }
+              modifiers: Int = 0, keyCode: Int = 0, character: Int = 0, unmodified: Int = 0) =
+        transport.input(panel, kind, x, y, dx, dy, button, clicks, modifiers, keyCode, character, unmodified)
 
     /** New frames per panel since the last call. */
     fun takeFrameCounts(): Map<Int, Int> = HashMap(newFrames).also { newFrames.clear() }
@@ -174,16 +156,16 @@ class ProducerHost(
         process.destroy()
         process.waitFor()
         receiver.join(1000)
-        held.forEach { bridge.halone_surface_use(it.first, -1) }
+        held.forEach { transport.done(it.panel, it.texture, it.index) }
         held.clear()
         onTextureClosed = null
         retired.forEach { close(it.first) }
         retired.clear()
         textures.values.forEach(::close)
         textures.clear()
-        resizes.values.forEach { it.surfaces.forEach(bridge::halone_surface_release) }
+        resizes.values.forEach { it.surfaces?.release() }
         resizes.clear()
-        bridge.halone_release_port(producerPort)
+        transport.close()
     }
 
     companion object {
