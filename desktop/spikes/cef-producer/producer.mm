@@ -268,13 +268,8 @@ public:
         panel_ = nullptr;
     }
 
-    // As on Android, the bridge goes only to pages on the window's own origin, after each load.
     void OnLoadEnd(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, int) override {
-        if (!panel_ || !frame->IsMain() || panel_->script.empty() || panel_->origin.empty()) return;
-        std::string url = frame->GetURL().ToString();
-        const std::string &origin = panel_->origin;
-        if (url != origin && url.compare(0, origin.size() + 1, origin + "/") != 0) return;
-        frame->ExecuteJavaScript(panel_->script, url, 0);
+        if (panel_) producer::injectBridge(frame, panel_->origin, panel_->script);
     }
 
     bool OnCursorChange(CefRefPtr<CefBrowser>, CefCursorHandle, cef_cursor_type_t type, const CefCursorInfo &) override {
@@ -299,12 +294,7 @@ private:
 };
 
 void createBrowser(Panel *p) {
-    // The bridge is a WebSocket to the compositor on 127.0.0.1, which Local
-    // Network Access blocks without asking in a windowless browser. Only the
-    // origin the bridge was given to may reach it.
-    if (!p->script.empty() && !p->origin.empty())
-        CefRequestContext::GetGlobalContext()->SetContentSetting(p->origin, p->origin, CEF_CONTENT_SETTING_TYPE_LOOPBACK_NETWORK,
-                                                                 CEF_CONTENT_SETTING_VALUE_ALLOW);
+    producer::allowBridge(p->origin, p->script);
     CefWindowInfo info;
     info.SetAsWindowless(nullptr);
     info.shared_texture_enabled = true;
@@ -313,31 +303,6 @@ void createBrowser(Panel *p) {
     settings.windowless_frame_rate = 60;
     CefBrowserHost::CreateBrowser(info, new PanelClient(p), p->url, settings, nullptr, nullptr);
 }
-
-// Serves https://halone.local/ from --halone-web-root, as WebViewAssetLoader serves the APK's assets on Android.
-class WebRootHandlerFactory : public CefSchemeHandlerFactory {
-public:
-    CefRefPtr<CefResourceHandler> Create(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, const CefString &,
-                                         CefRefPtr<CefRequest> request) override {
-        CefURLParts parts;
-        if (!CefParseURL(request->GetURL(), parts)) return nullptr;
-        std::string path = CefURIDecode(CefString(&parts.path), false, UU_SPACES).ToString();
-        if (path.empty() || path.back() == '/') path += "index.html";
-        if (path.find("..") != std::string::npos) return nullptr;
-        CefRefPtr<CefStreamReader> stream = CefStreamReader::CreateForFile(gWebRoot + path);
-        if (!stream) {
-            static const char notFound[] = "Not Found";
-            return new CefStreamResourceHandler(404, "Not Found", "text/plain", {},
-                                                CefStreamReader::CreateForData((void *)notFound, sizeof notFound - 1));
-        }
-        size_t dot = path.rfind('.');
-        std::string mime = dot == std::string::npos ? "" : CefGetMimeType(path.substr(dot + 1)).ToString();
-        return new CefStreamResourceHandler(mime.empty() ? "application/octet-stream" : mime, stream);
-    }
-
-private:
-    IMPLEMENT_REFCOUNTING(WebRootHandlerFactory);
-};
 
 class SpikeApp : public CefApp, public CefBrowserProcessHandler {
 public:
@@ -352,7 +317,7 @@ public:
     }
 
     void OnContextInitialized() override {
-        if (!gWebRoot.empty()) CefRegisterSchemeHandlerFactory("https", "halone.local", new WebRootHandlerFactory);
+        producer::serveWebRoot(gWebRoot);
         gContextReady = true;
         for (Panel *p : livePanels()) createBrowser(p);
     }
@@ -401,9 +366,9 @@ void handleOpen(const spike_open &o) {
     p->number = o.panel;
     p->width = (int)o.width;
     p->height = (int)o.height;
-    p->url = std::string(o.url, strnlen(o.url, sizeof o.url));
-    p->origin = std::string(o.origin, strnlen(o.origin, sizeof o.origin));
-    p->script = std::string(o.script, strnlen(o.script, sizeof o.script));
+    p->url = producer::text(o.url, sizeof o.url);
+    p->origin = producer::text(o.origin, sizeof o.origin);
+    p->script = producer::text(o.script, sizeof o.script);
     gPanels[p->number] = p;
     allocateSurfaces(p);
     sendHello(p);
@@ -519,7 +484,6 @@ int main(int argc, char *argv[]) {
         gDevice = MTLCreateSystemDefaultDevice();
         gQueue = [gDevice newCommandQueue];
         gWebRoot = commandLine->GetSwitchValue("halone-web-root").ToString();
-        while (!gWebRoot.empty() && gWebRoot.back() == '/') gWebRoot.pop_back();
         sendHello(nullptr);
         for (Panel *p : livePanels()) {
             allocateSurfaces(p);

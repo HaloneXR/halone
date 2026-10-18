@@ -1,11 +1,16 @@
 #pragma once
 
 #include <algorithm>
+#include <cstring>
 #include <sstream>
 #include <string>
 #include <vector>
 
 #include "include/cef_browser.h"
+#include "include/cef_parser.h"
+#include "include/cef_request_context.h"
+#include "include/cef_scheme.h"
+#include "include/wrapper/cef_stream_resource_handler.h"
 #include "protocol.h"
 
 // What the macOS and Linux producers share: everything but surfaces, the GPU copy and the transport.
@@ -162,5 +167,61 @@ void dispatchInput(CefRefPtr<CefBrowserHost> host, const spike_input &in, FillKe
         }
     }
 }
+
+/** Serves https://halone.local/ from a directory, as WebViewAssetLoader serves the APK's assets on Android. */
+class WebRootHandlerFactory : public CefSchemeHandlerFactory {
+public:
+    explicit WebRootHandlerFactory(std::string root) : root_(std::move(root)) {
+        while (!root_.empty() && root_.back() == '/') root_.pop_back();
+    }
+
+    CefRefPtr<CefResourceHandler> Create(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, const CefString &,
+                                         CefRefPtr<CefRequest> request) override {
+        CefURLParts parts;
+        if (!CefParseURL(request->GetURL(), parts)) return nullptr;
+        std::string path = CefURIDecode(CefString(&parts.path), false, UU_SPACES).ToString();
+        if (path.empty() || path.back() == '/') path += "index.html";
+        if (path.find("..") != std::string::npos) return nullptr;
+        CefRefPtr<CefStreamReader> stream = CefStreamReader::CreateForFile(root_ + path);
+        if (!stream) {
+            // A null stream crashes CefStreamResourceHandler::Read.
+            static const char notFound[] = "Not Found";
+            return new CefStreamResourceHandler(404, "Not Found", "text/plain", {},
+                                                CefStreamReader::CreateForData((void *)notFound, sizeof notFound - 1));
+        }
+        size_t dot = path.rfind('.');
+        std::string mime = dot == std::string::npos ? "" : CefGetMimeType(path.substr(dot + 1)).ToString();
+        return new CefStreamResourceHandler(mime.empty() ? "application/octet-stream" : mime, stream);
+    }
+
+private:
+    std::string root_;
+    IMPLEMENT_REFCOUNTING(WebRootHandlerFactory);
+};
+
+inline void serveWebRoot(const std::string &root) {
+    if (!root.empty()) CefRegisterSchemeHandlerFactory("https", "halone.local", new WebRootHandlerFactory(root));
+}
+
+/**
+ * The bridge is a WebSocket to the compositor on 127.0.0.1, which Local Network
+ * Access blocks without asking in a windowless browser. Only the origin the
+ * bridge was given to may reach it.
+ */
+inline void allowBridge(const std::string &origin, const std::string &script) {
+    if (script.empty() || origin.empty()) return;
+    CefRequestContext::GetGlobalContext()->SetContentSetting(origin, origin, CEF_CONTENT_SETTING_TYPE_LOOPBACK_NETWORK,
+                                                             CEF_CONTENT_SETTING_VALUE_ALLOW);
+}
+
+/** As on Android, the bridge goes only to pages on the window's own origin, after each load of its main frame. */
+inline void injectBridge(CefRefPtr<CefFrame> frame, const std::string &origin, const std::string &script) {
+    if (!frame->IsMain() || script.empty() || origin.empty()) return;
+    std::string url = frame->GetURL().ToString();
+    if (url != origin && url.compare(0, origin.size() + 1, origin + "/") != 0) return;
+    frame->ExecuteJavaScript(script, url, 0);
+}
+
+inline std::string text(const char *field, size_t size) { return std::string(field, strnlen(field, size)); }
 
 }  // namespace producer

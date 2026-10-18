@@ -165,6 +165,11 @@ Radeon 780M (RADV, Mesa 26.2.3), KDE Wayland, 60 Hz, windowed, 10 ms margin:
   keycodes on X11, so the compositor sends XKB keycodes either way, and the
   producer maps them to the Windows key codes CEF dispatches on.
 - 13 CEF processes, 1.4 GB summed RSS.
+- The shell (`desktop/compositor/run-shell.sh`) runs too: panels opened and
+  closed at runtime, the system apps served from `https://halone.local/`, and
+  the bridge reaching 127.0.0.1 from that origin only.
+- On quit the producer closes every browser first: CEF's shutdown never
+  returns while one is open, and the compositor would wait on it forever.
 - Chromium re-seeds the stack guard in forked children, so the producer's
   `main` is built without a stack protector; otherwise each child aborts as
   `main` returns.

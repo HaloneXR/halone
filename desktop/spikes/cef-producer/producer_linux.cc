@@ -17,6 +17,7 @@
 #include <condition_variable>
 #include <cstring>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <thread>
 
@@ -438,6 +439,7 @@ void copy(Imported &source, const cef_rect_t &visible, Surface &target, int widt
 }
 
 int gSocket = -1;
+void requestQuit();
 std::mutex gSendLock;
 double gMarginMs = 10;
 uint32_t gSurfaceCount = 4;
@@ -459,7 +461,7 @@ void sendPacket(const void *data, size_t size, const int *fds = nullptr, uint32_
         c->cmsg_len = CMSG_LEN(sizeof(int) * fdCount);
         memcpy(CMSG_DATA(c), fds, sizeof(int) * fdCount);
     }
-    if (sendmsg(gSocket, &msg, MSG_NOSIGNAL) < 0) CefPostTask(TID_UI, base::BindOnce(&CefQuitMessageLoop));
+    if (sendmsg(gSocket, &msg, MSG_NOSIGNAL) < 0) CefPostTask(TID_UI, base::BindOnce(&requestQuit));
 }
 
 struct Panel {
@@ -476,11 +478,34 @@ struct Panel {
     uint32_t paints = 0;
     uint32_t busy = 0;
     bool resizing = false;
+    std::string origin;
+    std::string script;
+    bool closing = false;
     producer::Window beginToPaint;
     producer::Window blit;
 };
 
-std::vector<Panel *> gPanels;
+std::map<uint32_t, Panel *> gPanels;
+bool gContextReady = false;
+bool gQuitting = false;
+std::string gWebRoot;
+
+Panel *findPanel(uint32_t number) {
+    auto it = gPanels.find(number);
+    return it == gPanels.end() || it->second->closing ? nullptr : it->second;
+}
+
+std::vector<Panel *> livePanels() {
+    std::vector<Panel *> live;
+    for (auto &entry : gPanels)
+        if (!entry.second->closing) live.push_back(entry.second);
+    return live;
+}
+
+void freeSurfaces(Panel *p) {
+    vkDeviceWaitIdle(gGpu.device);
+    for (uint32_t i = 0; i < gSurfaceCount; i++) destroySurface(p->surfaces[i]);
+}
 
 void allocateSurfaces(Panel *p) {
     for (uint32_t i = 0; i < gSurfaceCount; i++) p->surfaces[i] = createSurface(p->width, p->height);
@@ -566,13 +591,14 @@ void deliver(Panel *p, const CefAcceleratedPaintInfo &info) {
     sendPacket(&f, sizeof f);
 }
 
-class PanelClient : public CefClient, public CefRenderHandler, public CefLifeSpanHandler, public CefDisplayHandler {
+class PanelClient : public CefClient, public CefRenderHandler, public CefLifeSpanHandler, public CefDisplayHandler, public CefLoadHandler {
 public:
     explicit PanelClient(Panel *panel) : panel_(panel) {}
 
     CefRefPtr<CefRenderHandler> GetRenderHandler() override { return this; }
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
     CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
+    CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
 
     void GetViewRect(CefRefPtr<CefBrowser>, CefRect &rect) override { rect = CefRect(0, 0, panel_->width, panel_->height); }
 
@@ -587,7 +613,24 @@ public:
         if (type == PET_VIEW) deliver(panel_, info);
     }
 
-    void OnAfterCreated(CefRefPtr<CefBrowser> browser) override { panel_->browser = browser; }
+    void OnAfterCreated(CefRefPtr<CefBrowser> browser) override {
+        panel_->browser = browser;
+        if (panel_->closing) browser->GetHost()->CloseBrowser(true);
+    }
+
+    void OnBeforeClose(CefRefPtr<CefBrowser>) override {
+        panel_->browser = nullptr;
+        if (!panel_->closing) return;
+        gPanels.erase(panel_->number);
+        freeSurfaces(panel_);
+        delete panel_;
+        panel_ = nullptr;
+        if (gQuitting && gPanels.empty()) CefQuitMessageLoop();
+    }
+
+    void OnLoadEnd(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, int) override {
+        if (panel_) producer::injectBridge(frame, panel_->origin, panel_->script);
+    }
 
     bool OnCursorChange(CefRefPtr<CefBrowser>, CefCursorHandle, cef_cursor_type_t type, const CefCursorInfo &) override {
         const char *name = producer::cssCursor(type);
@@ -610,6 +653,17 @@ private:
     IMPLEMENT_REFCOUNTING(PanelClient);
 };
 
+void createBrowser(Panel *p) {
+    producer::allowBridge(p->origin, p->script);
+    CefWindowInfo info;
+    info.SetAsWindowless(0);
+    info.shared_texture_enabled = true;
+    info.external_begin_frame_enabled = true;
+    CefBrowserSettings settings;
+    settings.windowless_frame_rate = 60;
+    CefBrowserHost::CreateBrowser(info, new PanelClient(p), p->url, settings, nullptr, nullptr);
+}
+
 class ProducerApp : public CefApp, public CefBrowserProcessHandler {
 public:
     CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
@@ -623,15 +677,9 @@ public:
     }
 
     void OnContextInitialized() override {
-        for (Panel *p : gPanels) {
-            CefWindowInfo info;
-            info.SetAsWindowless(0);
-            info.shared_texture_enabled = true;
-            info.external_begin_frame_enabled = true;
-            CefBrowserSettings settings;
-            settings.windowless_frame_rate = 60;
-            CefBrowserHost::CreateBrowser(info, new PanelClient(p), p->url, settings, nullptr, nullptr);
-        }
+        producer::serveWebRoot(gWebRoot);
+        gContextReady = true;
+        for (Panel *p : livePanels()) createBrowser(p);
     }
 
 private:
@@ -663,15 +711,15 @@ uint16_t linuxCharacter(uint16_t c) {
 }
 
 void focus(Panel *target) {
-    for (Panel *p : gPanels)
+    for (Panel *p : livePanels())
         if (p->browser) p->browser->GetHost()->SetFocus(p == target);
 }
 
 void handleInput(spike_input in) {
-    if (in.panel >= gPanels.size()) return;
-    Panel *p = gPanels[in.panel];
-    if (!p->browser) return;
-    if (in.kind == SPIKE_INPUT_DOWN) focus(p);
+    Panel *p = findPanel(in.panel);
+    if (!p || !p->browser) return;
+    if (in.kind == SPIKE_INPUT_DOWN || in.kind == SPIKE_INPUT_FOCUS) focus(p);
+    if (in.kind == SPIKE_INPUT_FOCUS) return;
     producer::dispatchInput(p->browser->GetHost(), in, [](const spike_input &key, CefKeyEvent &event) {
         uint16_t character = linuxCharacter(key.character);
         event.native_key_code = (int)key.keyCode;
@@ -683,11 +731,10 @@ void handleInput(spike_input in) {
 }
 
 void handleResize(spike_resize r) {
-    if (r.panel >= gPanels.size() || r.width == 0 || r.height == 0) return;
-    Panel *p = gPanels[r.panel];
+    Panel *p = findPanel(r.panel);
+    if (!p || r.width == 0 || r.height == 0) return;
     if ((int)r.width == p->width && (int)r.height == p->height) return;
-    vkDeviceWaitIdle(gGpu.device);
-    for (uint32_t i = 0; i < gSurfaceCount; i++) destroySurface(p->surfaces[i]);
+    freeSurfaces(p);
     p->width = (int)r.width;
     p->height = (int)r.height;
     p->generation++;
@@ -699,14 +746,52 @@ void handleResize(spike_resize r) {
 }
 
 void handleRelease(spike_release r) {
-    if (r.panel >= gPanels.size()) return;
-    Panel *p = gPanels[r.panel];
-    if (r.generation == p->generation && r.index < gSurfaceCount) p->surfaces[r.index].inUse = false;
+    Panel *p = findPanel(r.panel);
+    if (p && r.generation == p->generation && r.index < gSurfaceCount) p->surfaces[r.index].inUse = false;
+}
+
+void handleOpen(const spike_open &o) {
+    if (gPanels.count(o.panel) || o.width == 0 || o.height == 0) return;
+    Panel *p = new Panel;
+    p->number = o.panel;
+    p->width = (int)o.width;
+    p->height = (int)o.height;
+    p->url = producer::text(o.url, sizeof o.url);
+    p->origin = producer::text(o.origin, sizeof o.origin);
+    p->script = producer::text(o.script, sizeof o.script);
+    gPanels[p->number] = p;
+    allocateSurfaces(p);
+    sendHello(p);
+    if (gContextReady) createBrowser(p);
+}
+
+void handleClose(spike_close c) {
+    Panel *p = findPanel(c.panel);
+    if (!p) return;
+    p->closing = true;
+    if (p->browser) p->browser->GetHost()->CloseBrowser(true);
+}
+
+/** CEF must close every browser before it shuts down, or CefShutdown never returns. */
+void requestQuit() {
+    if (gQuitting) return;
+    gQuitting = true;
+    bool waiting = false;
+    for (auto &entry : gPanels) {
+        Panel *p = entry.second;
+        p->closing = true;
+        if (p->browser) {
+            p->browser->GetHost()->CloseBrowser(true);
+            waiting = true;
+        }
+    }
+    if (!waiting) CefQuitMessageLoop();
+    else CefPostDelayedTask(TID_UI, base::BindOnce(&CefQuitMessageLoop), 3000);
 }
 
 void beginFrame() {
     uint64_t now = nowNs();
-    for (Panel *p : gPanels) {
+    for (Panel *p : livePanels()) {
         if (!p->browser) continue;
         p->begun = now;
         p->browser->GetHost()->SendExternalBeginFrame();
@@ -749,29 +834,38 @@ struct BeginTimer {
 } gTimer;
 
 void receive() {
-    union {
+    union Packet {
         uint32_t id;
         spike_tick tick;
         spike_input input;
         spike_resize resize;
         spike_release release;
-        char bytes[256];
-    } in;
+        spike_open open;
+        spike_close close;
+    };
+    std::vector<char> buffer(sizeof(Packet));
     for (;;) {
-        ssize_t n = recv(gSocket, &in, sizeof in, 0);
+        ssize_t n = recv(gSocket, buffer.data(), buffer.size(), 0);
         if (n <= 0) break;
+        Packet &in = *reinterpret_cast<Packet *>(buffer.data());
         switch (in.id) {
             case SPIKE_MSG_TICK: gTimer.schedule(in.tick.target); break;
             case SPIKE_MSG_INPUT: CefPostTask(TID_UI, base::BindOnce(&handleInput, in.input)); break;
             case SPIKE_MSG_RESIZE: CefPostTask(TID_UI, base::BindOnce(&handleResize, in.resize)); break;
             case SPIKE_MSG_RELEASE: CefPostTask(TID_UI, base::BindOnce(&handleRelease, in.release)); break;
+            case SPIKE_MSG_CLOSE: CefPostTask(TID_UI, base::BindOnce(&handleClose, in.close)); break;
+            case SPIKE_MSG_OPEN: {
+                auto open = std::make_shared<spike_open>(in.open);
+                CefPostTask(TID_UI, base::BindOnce([](std::shared_ptr<spike_open> o) { handleOpen(*o); }, open));
+                break;
+            }
         }
     }
-    CefPostTask(TID_UI, base::BindOnce(&CefQuitMessageLoop));
+    CefPostTask(TID_UI, base::BindOnce(&requestQuit));
 }
 
 void report() {
-    for (Panel *p : gPanels) {
+    for (Panel *p : livePanels()) {
         fprintf(stderr, "producer: panel %u %u paints, begin->paint p50 %.2f p95 %.2f ms, copy p50 %.2f p95 %.2f ms, %u busy\n",
                 p->number, p->paints, p->beginToPaint.percentile(0.5), p->beginToPaint.percentile(0.95),
                 p->blit.percentile(0.5), p->blit.percentile(0.95), p->busy);
@@ -794,13 +888,15 @@ void report() {
     commandLine->InitFromArgv(argc, argv);
     std::string path = commandLine->GetSwitchValue("spike-socket").ToString();
     std::vector<producer::PanelSpec> specs;
-    if (path.empty() || !producer::parsePanels(commandLine->GetSwitchValue("spike-panels").ToString(), specs)) {
-        fprintf(stderr, "usage: producer --spike-socket=<path> --spike-panels=WxH@url[,WxH@url...] [--spike-margin=ms] [--spike-surfaces=n]\n");
+    std::string panels = commandLine->GetSwitchValue("spike-panels").ToString();
+    if (path.empty() || (!panels.empty() && !producer::parsePanels(panels, specs))) {
+        fprintf(stderr, "usage: producer --spike-socket=<path> [--spike-panels=WxH@url[,WxH@url...]] [--spike-margin=ms] [--spike-surfaces=n] [--halone-web-root=dir]\n");
         return 2;
     }
     if (commandLine->HasSwitch("spike-margin")) gMarginMs = std::stod(commandLine->GetSwitchValue("spike-margin").ToString());
     if (commandLine->HasSwitch("spike-surfaces"))
         gSurfaceCount = (uint32_t)std::clamp(std::stoi(commandLine->GetSwitchValue("spike-surfaces").ToString()), 2, SPIKE_MAX_SURFACES);
+    gWebRoot = commandLine->GetSwitchValue("halone-web-root").ToString();
 
     gSocket = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
     sockaddr_un address = {};
@@ -820,7 +916,7 @@ void report() {
         p->width = s.width;
         p->height = s.height;
         p->url = s.url;
-        gPanels.push_back(p);
+        gPanels[p->number] = p;
         allocateSurfaces(p);
         sendHello(p);
     }
@@ -841,12 +937,17 @@ void report() {
     std::thread(receive).detach();
     std::thread([] {
         char c;
-        if (read(termPipe[0], &c, 1) == 1) CefPostTask(TID_UI, base::BindOnce(&CefQuitMessageLoop));
+        if (read(termPipe[0], &c, 1) == 1) CefPostTask(TID_UI, base::BindOnce(&requestQuit));
     }).detach();
     CefPostDelayedTask(TID_UI, base::BindOnce(&report), 2000);
 
     CefRunMessageLoop();
-    for (Panel *p : gPanels) p->browser = nullptr;
+    std::thread([] {
+        std::this_thread::sleep_for(std::chrono::seconds(5));
+        fprintf(stderr, "producer: CEF did not shut down; exiting anyway\n");
+        _exit(0);
+    }).detach();
+    for (auto &entry : gPanels) entry.second->browser = nullptr;
     CefShutdown();
     return 0;
 }
