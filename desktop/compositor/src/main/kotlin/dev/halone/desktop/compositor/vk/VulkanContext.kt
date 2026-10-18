@@ -84,14 +84,22 @@ class VulkanContext(window: Long) : AutoCloseable {
             vkEnumeratePhysicalDevices(instance, pCount, null)
             val pDevices = stack.mallocPointer(pCount.get(0))
             vkEnumeratePhysicalDevices(instance, pCount, pDevices)
-            physicalDevice = VkPhysicalDevice(pDevices.get(0), instance)
-
             val props = VkPhysicalDeviceProperties.calloc(stack)
+            val candidates = (0 until pCount.get(0)).map { VkPhysicalDevice(pDevices.get(it), instance) }
+                .mapNotNull { device ->
+                    val family = presentQueueFamily(device, stack)
+                    if (family < 0) return@mapNotNull null
+                    vkGetPhysicalDeviceProperties(device, props)
+                    Triple(device, family, DEVICE_PREFERENCE.indexOf(props.deviceType()).let { if (it < 0) DEVICE_PREFERENCE.size else it })
+                }
+            val (chosen, family, _) = candidates.minByOrNull { it.third }
+                ?: throw IllegalStateException("no Vulkan device can both draw and present to this window")
+            physicalDevice = chosen
+            queueFamily = family
             vkGetPhysicalDeviceProperties(physicalDevice, props)
             deviceName = props.deviceNameString()
             apiVersion = props.apiVersion()
 
-            queueFamily = findQueueFamily(stack)
             availableExtensions = deviceExtensions(stack)
 
             val presentIdFeature = VkPhysicalDevicePresentIdFeaturesKHR.calloc(stack).sType(KHRPresentId.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR)
@@ -151,33 +159,37 @@ class VulkanContext(window: Long) : AutoCloseable {
         }
     }
 
-    private fun findQueueFamily(stack: MemoryStack): Int {
+    /** A queue family of [device] that can both draw and present to the window, or -1. */
+    private fun presentQueueFamily(device: VkPhysicalDevice, stack: MemoryStack): Int {
         val pCount = stack.mallocInt(1)
-        vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, pCount, null)
+        vkGetPhysicalDeviceQueueFamilyProperties(device, pCount, null)
         val families = VkQueueFamilyProperties.malloc(pCount.get(0), stack)
-        vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, pCount, families)
+        vkGetPhysicalDeviceQueueFamilyProperties(device, pCount, families)
         val supported = stack.mallocInt(1)
         for (i in 0 until families.capacity()) {
-            vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, i, surface, supported)
+            vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, supported)
             if (families[i].queueFlags() and VK_QUEUE_GRAPHICS_BIT != 0 && supported.get(0) == VK_TRUE) return i
         }
-        throw IllegalStateException("no queue family can both draw and present")
+        return -1
     }
 
     private fun instanceExtensionNames(stack: MemoryStack): Set<String> {
         val pCount = stack.mallocInt(1)
         vkEnumerateInstanceExtensionProperties(null as String?, pCount, null)
-        val props = VkExtensionProperties.malloc(pCount.get(0), stack)
-        vkEnumerateInstanceExtensionProperties(null as String?, pCount, props)
-        return (0 until props.capacity()).map { props[it].extensionNameString() }.toSet()
+        return VkExtensionProperties.malloc(pCount.get(0)).use { props ->
+            vkEnumerateInstanceExtensionProperties(null as String?, pCount, props)
+            (0 until pCount.get(0)).map { props[it].extensionNameString() }.toSet()
+        }
     }
 
     private fun deviceExtensions(stack: MemoryStack): Set<String> {
         val pCount = stack.mallocInt(1)
         vkEnumerateDeviceExtensionProperties(physicalDevice, null as String?, pCount, null)
-        val props = VkExtensionProperties.malloc(pCount.get(0), stack)
-        vkEnumerateDeviceExtensionProperties(physicalDevice, null as String?, pCount, props)
-        return (0 until props.capacity()).map { props[it].extensionNameString() }.toSet()
+        // Heap, not the MemoryStack: RADV lists ~250 extensions at 260 bytes each, which overflows LWJGL's 64 KiB stack.
+        return VkExtensionProperties.malloc(pCount.get(0)).use { props ->
+            vkEnumerateDeviceExtensionProperties(physicalDevice, null as String?, pCount, props)
+            (0 until pCount.get(0)).map { props[it].extensionNameString() }.toSet()
+        }
     }
 
     fun versionString(version: Int = apiVersion) =
@@ -192,6 +204,15 @@ class VulkanContext(window: Long) : AutoCloseable {
     }
 
     companion object {
+        /** A real GPU before a software one: Linux usually lists llvmpipe beside the hardware. */
+        private val DEVICE_PREFERENCE = listOf(
+            VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU,
+            VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU,
+            VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU,
+            VK_PHYSICAL_DEVICE_TYPE_OTHER,
+            VK_PHYSICAL_DEVICE_TYPE_CPU,
+        )
+
         fun isMac() = System.getProperty("os.name").lowercase().contains("mac")
 
         fun strings(stack: MemoryStack, values: List<String>): PointerBuffer {
