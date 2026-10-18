@@ -272,9 +272,12 @@ shared textures, over the phase 6 contract.
     selection now prefers a real GPU.
   - RADV segfaults inside `vkWaitForPresentKHR`, so present-wait is off on
     Wayland (`HALONE_PRESENT_WAIT=1` forces it on).
-  - RADV offers no `VK_GOOGLE_display_timing` there, so frames can't be aimed
-    at measured presents. The glasses' own display clock could stand in for
-    it.
+  - RADV offers no `VK_GOOGLE_display_timing` there, so frames are aimed at
+    the glasses' own refresh grid instead, a fixed number of refreshes ahead.
+    Blind sweep, worn: 1 refresh ahead was best, 2 and 3 were in between, and
+    not aimed was worst. 1 is the default, the same count the Mac measures.
+  - `--glasses` on Wayland: GLFW names monitors after the connector ("DP-2"),
+    so the glasses are found as the only monitor at the stereo width.
 
 ### 9. Platform plugins
 

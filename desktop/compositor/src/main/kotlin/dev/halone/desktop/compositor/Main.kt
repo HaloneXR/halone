@@ -42,8 +42,8 @@ private data class Condition(
     val ahead: Int? = null,
 )
 
-/** Where nothing reports present times, until a blind sweep on the hardware says otherwise. */
-private const val DEFAULT_CLOCK_GRID_AHEAD = 2
+/** Where nothing reports present times. Blind sweep on RADV/KDE Wayland, 2026-10-18: 1 beat 2 and 3, and unaimed was worst. */
+private const val DEFAULT_CLOCK_GRID_AHEAD = 1
 
 /** What the first wear check ran: three images, unpaced, the fixed 16.6 ms prediction and no warp. */
 private val BASELINE = Condition("baseline", images = 3, pace = false, aimed = false, reproject = false)
