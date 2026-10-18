@@ -31,6 +31,7 @@ listOf(
     "core-scene",
     "core-glasses",
     "core-glasses-usb",
+    "core-compositor-common",
     "core-display",
     "core-compositor",
     "engine-webview",

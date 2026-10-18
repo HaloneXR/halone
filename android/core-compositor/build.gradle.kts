@@ -61,6 +61,7 @@ android {
 
 dependencies {
     api(project(":core-glasses"))
+    api(project(":core-compositor-common"))
     implementation(libs.androidx.core.ktx)
     testImplementation(libs.junit)
     testImplementation(libs.json)

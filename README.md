@@ -17,6 +17,7 @@ android/core-glasses/    IMU parse · fusion · prediction (plain JVM, no Androi
 android/core-glasses-usb/ Android USB HID transport and descriptor dump
 android/core-display/    display discovery · hotplug · mode switch · presentation
 android/core-compositor/ Panel/Scene model · per-eye render · follow · layout
+android/core-compositor-common/ distortion mesh · reprojection · present timing (plain JVM)
 android/engine-webview/  VirtualDisplay + Presentation -> SurfaceTexture
 android/core-shell/      window manager and Halone bridge host for the web environment
 android/app/             the app: home screen, environment, pointer pad, development actions over adb
