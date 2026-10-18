@@ -1,6 +1,7 @@
 package dev.halone.desktop.compositor.vk
 
 import org.lwjgl.system.MemoryStack.stackPush
+import org.lwjgl.vulkan.KHRSurface.VK_ERROR_SURFACE_LOST_KHR
 import org.lwjgl.vulkan.KHRSwapchain.*
 import org.lwjgl.vulkan.VK13.*
 import org.lwjgl.vulkan.VkCommandBuffer
@@ -139,6 +140,10 @@ class FrameLoop(private val vk: VulkanContext, private var images: Int? = null) 
             rebuild()
             return false
         }
+        if (acquired == VK_ERROR_SURFACE_LOST_KHR) {
+            recoverSurface()
+            return false
+        }
         if (acquired != VK_SUCCESS && acquired != VK_SUBOPTIMAL_KHR) vkCheck(acquired, "vkAcquireNextImageKHR")
         val index = pIndex.get(0)
         vkResetFences(vk.device, inFlight[frame])
@@ -193,7 +198,8 @@ class FrameLoop(private val vk: VulkanContext, private var images: Int? = null) 
         collectTimings()
         waitableId = if (presented == VK_SUCCESS) id else 0
         if (presented != VK_SUCCESS) presentResults.merge(presented, 1, Int::plus)
-        if (presented == VK_ERROR_OUT_OF_DATE_KHR || presented == VK_SUBOPTIMAL_KHR || resized) rebuild()
+        if (presented == VK_ERROR_SURFACE_LOST_KHR) recoverSurface()
+        else if (presented == VK_ERROR_OUT_OF_DATE_KHR || presented == VK_SUBOPTIMAL_KHR || resized) rebuild()
         true
     }
 
@@ -276,6 +282,22 @@ class FrameLoop(private val vk: VulkanContext, private var images: Int? = null) 
         val old = swapchain
         swapchain = Swapchain(vk, w, h, old, images)
         old.close()
+        renderFinished.forEach { vkDestroySemaphore(vk.device, it, null) }
+        renderFinished = LongArray(swapchain.images.size) { semaphore() }
+    }
+
+    /** Times the surface was lost and made again since last read, for diagnostics. */
+    var surfacesLost = 0
+
+    private fun recoverSurface() {
+        resized = false
+        waitableId = 0
+        vkDeviceWaitIdle(vk.device)
+        swapchain.close()
+        vk.recreateSurface()
+        surfacesLost++
+        val (w, h) = framebufferSize()
+        swapchain = Swapchain(vk, w, h, null, images)
         renderFinished.forEach { vkDestroySemaphore(vk.device, it, null) }
         renderFinished = LongArray(swapchain.images.size) { semaphore() }
     }

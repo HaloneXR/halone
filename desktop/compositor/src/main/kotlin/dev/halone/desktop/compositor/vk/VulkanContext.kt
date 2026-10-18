@@ -42,7 +42,8 @@ class VulkanContext(val output: Output) : AutoCloseable {
     constructor(window: Long) : this(WindowOutput(window))
 
     val instance: VkInstance
-    val surface: Long
+    var surface: Long
+        private set
     val physicalDevice: VkPhysicalDevice
     val device: VkDevice
     val queue: VkQueue
@@ -190,6 +191,15 @@ class VulkanContext(val output: Output) : AutoCloseable {
             vkEnumerateDeviceExtensionProperties(physicalDevice, null as String?, pCount, props)
             (0 until pCount.get(0)).map { props[it].extensionNameString() }.toSet()
         }
+    }
+
+    /** Replaces a lost surface, such as a leased display's after its link dropped; the swapchain must be gone already. */
+    fun recreateSurface() {
+        vkDeviceWaitIdle(device)
+        vkDestroySurfaceKHR(instance, surface, null)
+        output.release()
+        surface = output.surface(instance, physicalDevice)
+        check(surface != VK_NULL_HANDLE) { "the output could not be reached again" }
     }
 
     fun versionString(version: Int = apiVersion) =

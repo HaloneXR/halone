@@ -498,6 +498,10 @@ fun main(args: Array<String>) {
                 frames / (now - reportAt + 2), worstMs, headYaw, headPitch, aim?.refreshesAhead ?: "-",
                 compositor.scene.panels.joinToString { "%.1f°".format(Math.toDegrees(it.pose.yawRadians.toDouble())) }))
             if (!blind) println(probe.report(refreshNs)) else probe.report(refreshNs)
+            if (loop.surfacesLost > 0) {
+                println("surface lost and made again ${loop.surfacesLost} times")
+                loop.surfacesLost = 0
+            }
             if (loop.presentResults.isNotEmpty()) {
                 println("presents not VK_SUCCESS: ${loop.presentResults.entries.joinToString { "VkResult ${it.key} x${it.value}" }}")
                 loop.presentResults.clear()

@@ -54,6 +54,10 @@ class WindowOutput(val window: Long) : Output {
         return surface
     }
 
+    override fun release() {
+        surface = VK_NULL_HANDLE
+    }
+
     override fun size(): Pair<Int, Int> = stackPush().use { stack ->
         val w = stack.mallocInt(1)
         val h = stack.mallocInt(1)
@@ -149,5 +153,6 @@ class DisplayOutput(
     override fun release() {
         physicalDevice?.let { if (display != VK_NULL_HANDLE) vkReleaseDisplayEXT(it, display) }
         display = VK_NULL_HANDLE
+        physicalDevice = null
     }
 }
