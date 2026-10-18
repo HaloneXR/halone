@@ -8,14 +8,14 @@ import kotlin.math.sqrt
 import kotlin.system.exitProcess
 
 private const val USAGE = """usage: glasses-probe list
-       glasses-probe track [seconds]"""
+       glasses-probe track [seconds] [settle seconds]"""
 
 fun main(args: Array<String>) {
     val glasses = DesktopGlasses()
     try {
         when (args.firstOrNull()) {
             "list" -> list(glasses)
-            "track" -> track(glasses, args.getOrNull(1)?.toDoubleOrNull() ?: 20.0)
+            "track" -> track(glasses, args.getOrNull(1)?.toDoubleOrNull() ?: 20.0, args.getOrNull(2)?.toDoubleOrNull() ?: 5.0)
             else -> {
                 System.err.println(USAGE)
                 exitProcess(2)
@@ -39,7 +39,7 @@ private fun list(glasses: DesktopGlasses) {
     println(if (supported == null) "no supported glasses" else "supported: ${supported.second.match.info.displayName}")
 }
 
-private fun track(glasses: DesktopGlasses, seconds: Double) {
+private fun track(glasses: DesktopGlasses, seconds: Double, settleSeconds: Double) {
     val device = glasses.connect().getOrElse {
         System.err.println("connect failed: ${it.message}")
         exitProcess(1)
@@ -78,7 +78,7 @@ private fun track(glasses: DesktopGlasses, seconds: Double) {
         val rate = (count - lastCount) / ((now - lastPrint) / 1e9)
         val (yaw, pitch, roll) = head.poseAfterMs(0f).orientation.toEulerDegrees()
         println("yaw %7.2f  pitch %7.2f  roll %7.2f  | %6.0f samples/s  gyro %6.2f °/s".format(yaw, pitch, roll, rate, gyroDps.get()))
-        if (settledYaw == null && now - start > 5e9) {
+        if (settledYaw == null && now - start > settleSeconds * 1e9) {
             settledYaw = yaw
             settledAt = now
         }

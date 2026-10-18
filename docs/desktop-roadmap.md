@@ -113,6 +113,17 @@ CEF renders a Halone system app offscreen with shared textures enabled
   command-line tool prints the fused orientation from real glasses on macOS.
 - Check: macOS lets a user process open the IMU interfaces without claiming
   them from the system.
+- **Done 2026-10-18.** `core-glasses` is now a plain Kotlin/JVM module rather
+  than KMP: both Android and the desktop host are JVMs, so nothing needs
+  cross-compiling. The Android USB classes moved to `core-glasses-usb`. All
+  183 tests pass on a plain JVM. `desktop/glasses` adds a hid4java transport
+  and `glasses-probe`. On an Air 2 Pro plugged into an M4 Mac:
+  - The IMU streams at 999 samples/s with no gaps.
+  - The factory calibration reads from the device, and the MCU interface
+    reads the display mode and brightness.
+  - Converged drift at rest is 0.08°/min, against Android's ~0.2°/min.
+  - macOS exposes the IMU, MCU and timing interfaces under a vendor usage
+    page, with no permission prompt, no root and no driver to detach.
 
 ### 4. Desktop compositor
 
@@ -195,8 +206,9 @@ Each is a project of its own, after the platform works.
 Kept to refactors that are no-ops on Android, each landed on `main` as its own
 change only when a phase needs it:
 
-1. `core-glasses` becomes KMP like `core-scene`; `UsbHidTransport` moves to the
-   Android source set (phase 3).
+1. `core-glasses` becomes a plain Kotlin/JVM module; `UsbHidTransport` and
+   `DeviceDescriptorDump` move to `core-glasses-usb` (phase 3). Done on this
+   branch as its own commit, ready to move to `main`.
 2. `PanelEngine` returns a texture source instead of a `SurfaceTexture`
    (phase 4).
 3. `Bundle` and `WebMessagePortChannel` leave `core-shell`'s public surface
