@@ -280,7 +280,9 @@ settings and shortcuts. The simulator's dev server is a reference for several.
     probe app over the dev and install commands.
   - The Linux producer has OPEN, CLOSE, the web root, the bridge script and
     FOCUS (from the Linux session).
-  - Left: media; web windows' browser chrome; the CLI's `--desktop` target.
+  - The CLI's `--desktop` target (halone-sdk's `desktop` branch): dev,
+    install, uninstall and list, checked against the running shell.
+  - Left: media; web windows' browser chrome.
 
 ### 6. Plugin contract
 
