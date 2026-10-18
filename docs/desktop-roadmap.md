@@ -157,9 +157,34 @@ abstraction that `SurfaceTexture` also implements on Android.
       world-locking and level all looked right.
     - Fixed: GLFW minimised the fullscreen window whenever the Mac's focus
       moved, which took the scene off the glasses.
+    - Smoothing, measured with `VK_GOOGLE_display_timing` and the glasses'
+      own display clock:
+      - Presents land exactly on the glasses' refresh boundaries, on the
+        same clock as `System.nanoTime`.
+      - Even with an empty queue, macOS shows a frame two refreshes after
+        submission (~32 ms).
+      - The first wear's pipeline put ~66 ms between the head pose and the
+        photon. Three things brought it to ~31 ms:
+        - a 2-image swapchain paced on present-wait;
+        - taking MoltenVK's ~12 ms drawable wait in a separate submission
+          before sampling the pose;
+        - aiming at the photon learned from measured presents (0.00 ms aim
+          error).
+      - On top of that comes `StereoCompositor`'s late first-row and
+        last-row warp.
+    - Blind A/B, worn: the new pipeline was smoother "by a lot"; the old one
+      "feels like jelly, especially after fast movements".
+    - Blind scan-direction sweep: +1 (top row first, a full refresh) beat 0
+      and −1, which confirms the default Android uses on the same panel. A
+      finer sweep couldn't separate 0.75 from 1.0, and 1.25 and 1.5 were
+      worse; +1 is kept. The 1080 visible lines out of ~1125 put the true
+      value at about 0.96.
   - Left:
-    - Reprojection and present timing (`VK_GOOGLE_display_timing`), then a
-      blind A/B against fixed-horizon prediction for judder.
+    - A faint shear remains during turns, probably prediction error rather
+      than the scan span. Worth an A/B on the prediction itself.
+    - Below two refreshes of latency would need macOS to skip
+      compositing, for example through direct-to-display in native
+      fullscreen. Not explored.
     - Panels from producers (IOSurfaces through `VK_EXT_metal_objects`).
     - Chrome: frames, title bars, cursor and notices. Java2D can replace the
       Android Canvas painters.

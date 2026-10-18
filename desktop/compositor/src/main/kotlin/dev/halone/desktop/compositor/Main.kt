@@ -50,6 +50,7 @@ private class Options(args: Array<String>) {
     }
     val ab = "--ab" in args
     val scanSweep = "--scan-sweep" in args
+    val scanValues = value(args, "--scan-values")?.split(",")?.map { it.toFloat() } ?: listOf(1f, 0f, -1f)
     val reveal = value(args, "--reveal")
     val abSeconds = value(args, "--ab-interval")?.toDouble() ?: 8.0
 
@@ -96,7 +97,7 @@ fun main(args: Array<String>) {
 
     val blind = options.ab || options.scanSweep
     val abLetters = when {
-        options.scanSweep -> listOf(1f, 0f, -1f).map { SMOOTH.copy(name = "scan %+.0f".format(it), scan = it) }.shuffled()
+        options.scanSweep -> options.scanValues.map { SMOOTH.copy(name = "scan %+.2f".format(it), scan = it) }.shuffled()
         options.ab -> listOf(BASELINE, SMOOTH).shuffled()
         else -> emptyList()
     }
