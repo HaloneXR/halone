@@ -73,6 +73,12 @@ passes it to a GL window in another process, which draws it as a quad.
 - Exit: the consumer shows the producer's frames at display rate with no CPU
   copy. Measure the latency from producer draw to consumer present.
 - Decides: whether the "every panel is a producer" direction holds.
+- **Done 2026-10-18; the direction holds.** Handoff ~20 µs, no CPU copy, and
+  with vsync pacing about margin + 2 ms of latency and no repeats. Two
+  consequences: producers should be paced by frame callbacks with a deadline,
+  and windowed OpenGL on macOS reports no presentation times, which points the
+  macOS compositor at Metal. See
+  [desktop/spikes/shared-texture](../desktop/spikes/shared-texture/README.md).
 
 ### 2. Spike: CEF as a producer
 
