@@ -86,6 +86,19 @@ can open them; replug the glasses after adding it:
 KERNEL=="hidraw*", ATTRS{idVendor}=="3318", TAG+="uaccess"
 ```
 
+`--glasses --lease` takes the glasses off the desktop and shows the scene on
+them directly through a DRM lease (`wp_drm_lease_v1`), with no desktop
+compositor in between. A small window on the desktop keeps the keyboard and
+mouse. KWin only offers displays the kernel marks non-desktop, which the
+glasses' EDID does not, so override it first (as root; lasts until `reset` or
+a reboot):
+
+```sh
+sudo tools/glasses-lease-edid.py apply     # glasses become leasable, leave the desktop
+desktop/compositor/build/install/halone-desktop/bin/halone-desktop --glasses --lease
+sudo tools/glasses-lease-edid.py reset     # back to a desktop monitor
+```
+
 Producer panels (`--producer`, see `desktop/compositor/run-with-producer.sh`)
 are macOS-only for now: they need IOSurfaces and Mach ports.
 
@@ -278,6 +291,20 @@ shared textures, over the phase 6 contract.
     not aimed was worst. 1 is the default, the same count the Mac measures.
   - `--glasses` on Wayland: GLFW names monitors after the connector ("DP-2"),
     so the glasses are found as the only monitor at the stereo width.
+  - `--lease`: KWin 6.7 leases the glasses once a debugfs EDID override adds
+    a Microsoft HMD block, which sets the connector's non-desktop property.
+    VK_EXT_acquire_drm_display then presents straight to them. RADV reports
+    present times there (VK_GOOGLE_display_timing), so frames are aimed from
+    measured presents: pose to photon 16.9 ms, presents locked to the glasses'
+    refresh. Present-wait crashes the same way there, so it is off on RADV.
+  - The loop wakes on the flip, so samples sit right at a refresh; counting
+    from "the next refresh" put 4-10 frames in 120 a refresh off (felt as
+    stutter). The count is now taken from the samples' usual phase.
+  - The input window must draw to be shown on Wayland. A Vulkan surface for it
+    would add the Wayland WSI to the instance, and RADV then drops display
+    timing for the leased display, so it swaps an empty OpenGL ES buffer.
+  - KWin keeps the connector on offer through the glasses' switch to 3D, so
+    the lease is taken after the switch.
 
 ### 9. Platform plugins
 
