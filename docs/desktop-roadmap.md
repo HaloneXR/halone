@@ -218,15 +218,24 @@ abstraction that `SurfaceTexture` also implements on Android.
       finer sweep couldn't separate 0.75 from 1.0, and 1.25 and 1.5 were
       worse; +1 is kept. The 1080 visible lines out of ~1125 put the true
       value at about 0.96.
+    - Panels from producers: IOSurfaces imported through
+      `VK_EXT_metal_objects`, with mouse and keyboard input, validated by
+      hand on macOS. A RESIZE message lays the page out at a window's new
+      size; as on Android, the old picture is held stretched while the
+      window eases into it. A CURSOR message carries the CSS cursor the page
+      asks for.
+    - Window chrome as on Android, from the shared `ChromeLayout` and
+      `ChromePress`: frames, title bars (Java2D ports of the Canvas
+      painters), resize handles and preview, grab lift, notices, and the
+      arrow in the shapes content asks for. Checked windowed on macOS with
+      `--chrome-test`; not yet worn.
   - Left:
     - A faint shear remains during turns, probably prediction error rather
       than the scan span. Worth an A/B on the prediction itself.
     - Below two refreshes of latency would need macOS to skip
       compositing, for example through direct-to-display in native
       fullscreen. Not explored.
-    - Panels from producers (IOSurfaces through `VK_EXT_metal_objects`).
-    - Chrome: frames, title bars, cursor and notices. Java2D can replace the
-      Android Canvas painters.
+    - Wear the chrome and resizing on the glasses.
 
 ### 5. Shell and bridge
 
