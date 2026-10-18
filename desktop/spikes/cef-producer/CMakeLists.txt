@@ -1,4 +1,40 @@
 cmake_minimum_required(VERSION 3.21)
+if(NOT APPLE)
+  project(halone_cef_producer LANGUAGES C CXX)
+  set(CMAKE_CXX_STANDARD 20)
+
+  file(GLOB CEF_ROOT LIST_DIRECTORIES true "${CMAKE_CURRENT_SOURCE_DIR}/third_party/cef_binary_*_linux64")
+  if(NOT CEF_ROOT)
+    message(FATAL_ERROR "Run ./fetch-cef.sh first")
+  endif()
+  set(USE_SANDBOX OFF)
+  set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CEF_ROOT}/cmake")
+  find_package(CEF REQUIRED)
+  add_subdirectory(${CEF_LIBCEF_DLL_WRAPPER_PATH} libcef_dll_wrapper)
+
+  include(FetchContent)
+  FetchContent_Declare(vulkan_headers
+    URL https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/vulkan-sdk-1.4.341.0.tar.gz
+    URL_HASH SHA256=d73bc5036b6556b741f6985ff600ca720308c5f2850e4a43ceb498bd3de069e7
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  FetchContent_MakeAvailable(vulkan_headers)
+
+  SET_CEF_TARGET_OUT_DIR()
+  add_executable(producer producer_linux.cc)
+  SET_EXECUTABLE_TARGET_PROPERTIES(producer)
+  add_dependencies(producer libcef_dll_wrapper)
+  target_include_directories(producer PRIVATE ${CEF_ROOT} ${CMAKE_CURRENT_SOURCE_DIR}/../../native)
+  target_link_libraries(producer libcef_dll_wrapper "${CEF_LIB_RELEASE}" Vulkan::Headers ${CMAKE_DL_LIBS})
+  set_target_properties(producer PROPERTIES
+    OUTPUT_NAME halone-cef-producer
+    INSTALL_RPATH "$ORIGIN"
+    BUILD_WITH_INSTALL_RPATH TRUE
+    RUNTIME_OUTPUT_DIRECTORY ${CEF_TARGET_OUT_DIR})
+  COPY_FILES(producer "${CEF_BINARY_FILES}" "${CEF_BINARY_DIR}" "${CEF_TARGET_OUT_DIR}")
+  COPY_FILES(producer "${CEF_RESOURCE_FILES}" "${CEF_RESOURCE_DIR}" "${CEF_TARGET_OUT_DIR}")
+  return()
+endif()
+
 project(halone_cef_spike LANGUAGES C CXX OBJC OBJCXX)
 set(CMAKE_OBJCXX_STANDARD 20)
 

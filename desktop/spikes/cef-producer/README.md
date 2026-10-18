@@ -130,6 +130,45 @@ right click that raises `contextmenu` all reached the page.
    bind, is a candidate worth checking in phase 4: it reports display timing,
    can import IOSurfaces, and would carry over to Windows and Linux.
 
+## Linux
+
+`producer_linux.cc` is the same producer for Linux; what the two share is in
+`producer_common.h`. CEF's `OnAcceleratedPaint` gives a DMA-BUF that is only
+valid during the callback, so the producer imports it into Vulkan (loaded at
+runtime, so no Vulkan SDK is needed), waits on the GPU for CEF's writes through
+the buffer's exported sync file, and copies it into the panel's own ring of
+exported DMA-BUFs. Messages travel over a `SOCK_SEQPACKET` Unix socket with the
+fds attached. The compositor sends `RELEASE` for each frame it is done with,
+where macOS uses IOSurface use counts, and a resize starts a new generation of
+surfaces so a late release cannot free a surface of the new ring.
+
+```sh
+./fetch-cef.sh                          # CEF 154 for linux64, SHA-1 checked
+mise exec cmake ninja -- cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release
+mise exec cmake ninja -- ninja -C build producer
+```
+
+The compositor's own `nativeBridgeUnix` task builds its side (`desktop/native/bridge_unix.c`).
+The producer passes `--password-store=basic` to keep Chromium off the desktop's keyring.
+
+Radeon 780M (RADV, Mesa 26.2.3), KDE Wayland, 60 Hz, windowed, 10 ms margin:
+
+| scenario | active panels' new frames / 2 s | paint p50 / p95 | copy p50 / p95 | CEF CPU |
+|---|---|---|---|---|
+| animated page | 120 | 2.4 / 3.9 ms | 0.4 / 0.7 ms | |
+| launcher + animated + VP9 | 120, 120 | 4.1 / 5.3 ms (animated), 3.4 / 5.1 ms (video) | 0.4–0.6 / 1.3 ms | 60% |
+
+- The video decodes at 58–61.5 fps with no dropped frames; Chromium reports
+  1080p60 VP9 and AV1 as `powerEfficient`.
+- The scripted input test passes: clicks, typing `hello` with correct `key`
+  and `code`, and wheel scrolling. GLFW gives evdev codes on Wayland and XKB
+  keycodes on X11, so the compositor sends XKB keycodes either way, and the
+  producer maps them to the Windows key codes CEF dispatches on.
+- 13 CEF processes, 1.4 GB summed RSS.
+- Chromium re-seeds the stack guard in forked children, so the producer's
+  `main` is built without a stack protector; otherwise each child aborts as
+  `main` returns.
+
 ## Not covered
 
 - Refresh rates above 60 Hz, and the glasses' output.
