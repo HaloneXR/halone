@@ -351,6 +351,13 @@ shared textures, over the phase 6 contract.
     timing for the leased display, so it swaps an empty OpenGL ES buffer.
   - KWin keeps the connector on offer through the glasses' switch to 3D, so
     the lease is taken after the switch.
+  - The shell's battery, network meter and thumbnails: sysfs for the battery
+    (plugged in counts as charging, as a laptop held at its charge limit
+    reports "Not charging"); NetworkManager over sd-bus for the primary
+    connection and the access point's strength, in nmcli's bars, since
+    `/proc/net/wireless` is gone from current kernels; and the freedesktop
+    thumbnail cache, then the installed `.thumbnailer` entries, then ffmpeg
+    for a video's frame or a song's cover.
   - Producer panels: CEF's DMA-BUF paints are copied into the producer's own
     ring of exported DMA-BUFs (single-plane modifiers), which the compositor
     imports with VK_EXT_image_drm_format_modifier. The same messages travel

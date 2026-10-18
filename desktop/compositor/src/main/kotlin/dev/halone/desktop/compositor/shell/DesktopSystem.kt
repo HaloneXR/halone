@@ -24,7 +24,7 @@ object DesktopSystem {
         when {
             os.contains("mac") -> Mac.battery()
             os.contains("win") -> Windows.battery()
-            else -> linuxBattery()
+            else -> LinuxSystem.battery()
         }
     }.getOrNull()
 
@@ -33,42 +33,16 @@ object DesktopSystem {
         when {
             os.contains("mac") -> Mac.network()
             os.contains("win") -> null
-            else -> linuxNetwork()
+            else -> LinuxSystem.network()
         }
     }.getOrNull()
 
     /** The OS's own thumbnail of [file] fitting [sizePx], as a JPEG; null where there is none, or no such service here. */
-    val thumbnailer: ((File, Int, Float) -> ByteArray?)? = if (os.contains("mac")) Mac::thumbnail else null
-
-    private fun linuxBattery(): Battery? {
-        val battery = File("/sys/class/power_supply").listFiles().orEmpty()
-            .filter { File(it, "type").readTextOrNull() == "Battery" && File(it, "scope").readTextOrNull() != "Device" }
-            .minByOrNull { it.name } ?: return null
-        val capacity = File(battery, "capacity").readTextOrNull()?.toDoubleOrNull() ?: return null
-        val status = File(battery, "status").readTextOrNull()
-        return Battery((capacity / 100.0).coerceIn(0.0, 1.0), status == "Charging" || status == "Full")
+    val thumbnailer: ((File, Int, Float) -> ByteArray?)? = when {
+        os.contains("mac") -> Mac::thumbnail
+        os.contains("win") -> null
+        else -> LinuxThumbnails::thumbnail
     }
-
-    /**
-     * Wi-Fi from `/proc/net/wireless`, whose link quality is out of 70 as
-     * the kernel's drivers report it; otherwise any interface but loopback
-     * with a carrier is a wired one.
-     */
-    private fun linuxNetwork(): NetworkState {
-        val up = File("/sys/class/net").listFiles().orEmpty().filter { it.name != "lo" && File(it, "carrier").readTextOrNull() == "1" }
-        val wireless = File("/proc/net/wireless").readTextOrNull()?.lines().orEmpty().drop(2).mapNotNull { line ->
-            val fields = line.trim().split(Regex("\\s+"))
-            val name = fields.getOrNull(0)?.removeSuffix(":") ?: return@mapNotNull null
-            val quality = fields.getOrNull(2)?.removeSuffix(".")?.toDoubleOrNull() ?: return@mapNotNull null
-            name to quality
-        }.toMap()
-        val wifi = up.firstOrNull { it.name in wireless }
-        if (wifi != null) return NetworkState(NetworkState.Kind.WIFI, ((wireless.getValue(wifi.name) / 70.0) * 4).toInt().coerceIn(0, 4))
-        val wired = up.any { !File(it, "wireless").exists() && File(it, "type").readTextOrNull() == "1" && File(it, "device").exists() }
-        return NetworkState(if (wired) NetworkState.Kind.WIRED else NetworkState.Kind.OFFLINE)
-    }
-
-    private fun File.readTextOrNull() = runCatching { readText().trim() }.getOrNull()
 
     @Suppress("FunctionName")
     private interface MacSystem : Library {
