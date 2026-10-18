@@ -55,6 +55,10 @@ class GlassesSession private constructor(
     /**
      * The GLFW monitor the glasses appear as, once it reports [frameWidth]. A mode
      * change makes the host drop the display and add it back, so this waits.
+     *
+     * macOS names a monitor after the product, which the driver's name hints
+     * match. On Linux GLFW names it after the connector ("DP-2"), so when no name
+     * matches, the only monitor at the stereo width is taken instead.
      */
     fun findMonitor(frameWidth: Int, timeoutSeconds: Double = 15.0): Long? {
         val hints = device.displayNameHints.map { it.lowercase() }
@@ -63,12 +67,11 @@ class GlassesSession private constructor(
             glfwPollEvents()
             val monitors = glfwGetMonitors()
             if (monitors != null) {
-                for (i in 0 until monitors.limit()) {
-                    val monitor = monitors.get(i)
-                    val name = glfwGetMonitorName(monitor)?.lowercase() ?: continue
-                    val mode = glfwGetVideoMode(monitor) ?: continue
-                    if (hints.any { name.contains(it) } && mode.width() == frameWidth) return monitor
-                }
+                val atWidth = (0 until monitors.limit()).map { monitors.get(it) }
+                    .filter { glfwGetVideoMode(it)?.width() == frameWidth }
+                atWidth.firstOrNull { monitor -> glfwGetMonitorName(monitor)?.lowercase()?.let { name -> hints.any { name.contains(it) } } == true }
+                    ?.let { return it }
+                if (atWidth.size == 1) return atWidth[0]
             }
             Thread.sleep(200)
         }
