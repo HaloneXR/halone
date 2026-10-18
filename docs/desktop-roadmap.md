@@ -24,6 +24,9 @@ Android app stays the product.
 - Changing how the Android app works to suit the desktop. Shared code moves
   only when the move is a no-op for Android.
 - A store, an installer or auto-update before the experiment proves itself.
+- DRM (Widevine). Services that need it, such as Netflix, Disney+ and Prime
+  Video, won't play. Supporting it would mean Google licensing, special signing
+  of the app (VMP), and ongoing obligations that aren't worth taking on.
 
 ## Starting point
 
