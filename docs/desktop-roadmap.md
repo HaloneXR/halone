@@ -148,13 +148,33 @@ socket or named pipe on desktop.
 - Exit: a sample plugin written in a language other than Kotlin opens a panel,
   takes input and survives being killed and restarted.
 
-### 7. Windows and Linux
+### 7. Native video panel
+
+Halone's own apps play local media through the OS instead of the web engine. A
+built-in producer decodes with the platform's media framework into a panel's
+shared textures, over the phase 6 contract.
+
+- macOS: AVFoundation. H.264, HEVC and AAC decode on Apple's hardware, and the
+  codec licensing comes with the OS.
+- Windows: Media Foundation. Linux: GStreamer or ffmpeg, with whatever codecs
+  the distribution provides.
+- The Video, Files and Images apps ask the bridge to open a native video panel
+  for a file. The controls stay in the web app and act through the bridge
+  (play, pause, seek, position, tracks).
+- Why: it covers phone and camera recordings, which stock CEF can't play (see
+  [Known limitations](#known-limitations)). It's also the first real producer
+  for the phase 6 contract.
+- Exit: an H.264 and an HEVC recording from a phone play at their own frame
+  rate with hardware decoding and audio, seek, and are controlled from the
+  Video app.
+
+### 8. Windows and Linux
 
 - Windows: DXGI shared handles, HID through hidapi, output placement.
 - Linux: DMA-BUF, hidraw permissions (a udev rule), output placement, which is
   the hard part on Wayland.
 
-### 8. Platform plugins
+### 9. Platform plugins
 
 Each is a project of its own, after the platform works.
 
@@ -183,6 +203,22 @@ change only when a phase needs it:
 
 Everything else lives in new desktop modules on this branch. Rebase on `main`
 regularly so the branch stays close.
+
+## Known limitations
+
+- **Websites can't use H.264, HEVC or AAC.** Stock CEF builds play VP9, AV1,
+  Opus and MP3, but not these (found in spike 2). Large streaming sites ask the
+  browser what it supports and fall back to VP9 or AV1. But sites that serve a
+  single MP4 file, offer AAC-only audio, or stream only H.264 won't play.
+  - ffmpeg isn't a fallback. Chromium already bundles its own ffmpeg and fixes
+    the accepted formats at build time, and transcoding on the fly breaks
+    seeking and costs a real-time encode.
+  - The fix is a CEF build with proprietary codecs: Chromium built from source
+    for every update, with the codec licensing checked first.
+  - Until then it stays a limitation. Local files are covered by the native
+    video panel (phase 7).
+  - Android is not affected: its system WebView and GeckoView decode these
+    formats through the platform.
 
 ## Open questions
 
