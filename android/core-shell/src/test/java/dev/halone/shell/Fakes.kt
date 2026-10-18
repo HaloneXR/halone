@@ -1,28 +1,31 @@
 package dev.halone.shell
 
-import android.graphics.SurfaceTexture
-import dev.halone.compositor.Panel
-import dev.halone.compositor.PanelEngine
 import dev.halone.compositor.PanelPose
-import dev.halone.compositor.Scene
+import dev.halone.compositor.PanelScene
+import dev.halone.compositor.ScenePanel
+import dev.halone.compositor.StereoRegion
+import dev.halone.compositor.WindowPanel
 
-class FakeEngine(override var widthPx: Int = 1280, override var heightPx: Int = 800) : PanelEngine {
+class FakePanel(id: String, override var widthPx: Int = 1280, override var heightPx: Int = 800) :
+    ScenePanel(id, PanelPose()), WindowPanel {
+    override var title = id
+    override var tag: String? = null
+    override var stereoRegion: StereoRegion? = null
+
     var closed = false
         private set
 
-    override fun resize(widthPx: Int, heightPx: Int) {
+    override fun resizeContent(widthPx: Int, heightPx: Int) {
         this.widthPx = widthPx
         this.heightPx = heightPx
     }
 
-    override fun createTexture(textureId: Int): SurfaceTexture = error("needs a GL context")
-    override fun attach() = Unit
-    override fun dispatchTap(x: Float, y: Float) = Unit
-    override fun dispatchScroll(fromX: Float, fromY: Float, toX: Float, toY: Float, steps: Int) = Unit
-    override fun close() {
+    fun close() {
         closed = true
     }
 }
+
+class Scene : PanelScene<FakePanel>()
 
 class FakeBrowser(url: String) : BrowserControl {
     private var nextTab = 2
@@ -92,26 +95,26 @@ class FakeWebApp(override var url: String?) : WebAppControl {
     }
 }
 
-class FakePlatform(private val scene: Scene) : ShellPlatform {
+class FakePlatform(private val scene: Scene) : ShellPlatform<FakePanel> {
     val browsers = HashMap<String, FakeBrowser>()
     val webApps = HashMap<String, FakeWebApp>()
     val notices = mutableListOf<String>()
 
-    override fun openWebApp(windowId: String, app: WebApp, url: String): Panel? =
+    override fun openWebApp(windowId: String, app: WebApp, url: String): FakePanel? =
         open(windowId, url, WebApp.WIDTH_PX, WebApp.HEIGHT_PX)?.also { webApps[windowId] = FakeWebApp(url) }
 
     override fun webApp(windowId: String): WebAppControl? = webApps[windowId]
 
     val packageFiles = HashMap<String, java.io.File?>()
 
-    override fun openPackageApp(windowId: String, app: InstalledApp, files: java.io.File?, url: String): Panel? =
+    override fun openPackageApp(windowId: String, app: InstalledApp, files: java.io.File?, url: String): FakePanel? =
         open(windowId, url, app.manifest.widthPx, app.manifest.heightPx)?.also { packageFiles[windowId] = files }
 
     override fun notice(text: String) {
         notices += text
     }
 
-    val nativeArgs = HashMap<String, android.os.Bundle?>()
+    val nativeArgs = HashMap<String, Any?>()
     val statusClicks = mutableListOf<String>()
     val reopened = mutableListOf<String>()
 
@@ -123,7 +126,7 @@ class FakePlatform(private val scene: Scene) : ShellPlatform {
         statusClicks += "$provider/$id"
     }
 
-    override fun openNativeApp(windowId: String, app: NativeApp, args: android.os.Bundle?): Panel? =
+    override fun openNativeApp(windowId: String, app: NativeApp, args: Any?): FakePanel? =
         open(windowId, "", app.app.widthPx, app.app.heightPx)?.also { nativeArgs[windowId] = args }
 
     override fun browser(windowId: String): BrowserControl? = browsers[windowId]
@@ -135,32 +138,32 @@ class FakePlatform(private val scene: Scene) : ShellPlatform {
     val opened = mutableListOf<Pair<String, String>>()
     val applied = mutableListOf<String?>()
 
-    override fun openApp(windowId: String, app: AppInfo, url: String): Panel? = open(windowId, url, app.widthPx, app.heightPx)
+    override fun openApp(windowId: String, app: AppInfo, url: String): FakePanel? = open(windowId, url, app.widthPx, app.heightPx)
     val privateOpened = mutableListOf<String>()
 
-    override fun openWeb(windowId: String, url: String, private: Boolean): Panel? =
+    override fun openWeb(windowId: String, url: String, private: Boolean): FakePanel? =
         open(windowId, url, 1280, 800)?.also {
             browsers[windowId] = FakeBrowser(url)
             if (private) privateOpened += windowId
         }
 
-    private fun open(windowId: String, url: String, width: Int, height: Int): Panel? {
+    private fun open(windowId: String, url: String, width: Int, height: Int): FakePanel? {
         if (!available) return null
         opened += windowId to url
-        return scene.open(Panel(windowId, FakeEngine(width, height), PanelPose()))
+        return scene.open(FakePanel(windowId, width, height))
     }
 
-    override fun close(panel: Panel) {
+    override fun close(panel: FakePanel) {
         scene.remove(panel)
-        panel.engine.close()
+        panel.close()
     }
 
     override fun openOverlays(dock: AppInfo, dockUrl: String, launcher: AppInfo, launcherUrl: String) {
         opened += dock.id to dockUrl
         opened += launcher.id to launcherUrl
         scene.setOverlays(
-            Panel(dock.id, FakeEngine(dock.widthPx, dock.heightPx), PanelPose()),
-            Panel(launcher.id, FakeEngine(launcher.widthPx, launcher.heightPx), PanelPose()),
+            FakePanel(dock.id, dock.widthPx, dock.heightPx),
+            FakePanel(launcher.id, launcher.widthPx, launcher.heightPx),
         )
     }
 

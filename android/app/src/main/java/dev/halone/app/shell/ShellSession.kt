@@ -7,63 +7,64 @@ import android.content.IntentFilter
 import android.os.BatteryManager
 import android.os.Handler
 import android.os.Looper
-import dev.halone.compositor.CollisionPolicy
-import dev.halone.compositor.DockVisibility
-import dev.halone.compositor.SizeLimits
-import dev.halone.compositor.Panel
-import dev.halone.engine.plugin.PluginConnection
-import dev.halone.engine.plugin.PluginDirectory
-import dev.halone.engine.plugin.PluginIcons
-import dev.halone.engine.plugin.PluginPackage
-import dev.halone.engine.plugin.PluginPanelEngine
-import dev.halone.engine.plugin.PluginWindow
-import dev.halone.engine.plugin.ProvidedApp
-import dev.halone.engine.webview.BridgeConnector
-import dev.halone.engine.webview.SelectPopup
-import dev.halone.engine.webview.TextField
-import dev.halone.engine.webview.WebViewEngine
-import dev.halone.glasses.api.BrightnessControl
-import dev.halone.shell.AppInfo
-import dev.halone.shell.Battery
-import dev.halone.shell.BrowserControl
-import dev.halone.shell.BridgeHost
-import dev.halone.shell.Shell
-import dev.halone.shell.ShellPlatform
-import dev.halone.shell.ShellSettings
-import dev.halone.shell.FileServer
-import dev.halone.shell.SharedFiles
-import dev.halone.shell.FileRoot
-import dev.halone.shell.Media
-import dev.halone.shell.StorageAccess
-import dev.halone.shell.SystemInfo
-import dev.halone.shell.WebMessagePortChannel
-import dev.halone.shell.BrowserData
-import dev.halone.shell.BrowserHistory
-import dev.halone.shell.Bookmarks
-import dev.halone.shell.Downloads
-import dev.halone.shell.MenuItem
-import dev.halone.shell.HalonePackage
-import dev.halone.shell.InstalledApp
-import dev.halone.shell.NativeApp
-import dev.halone.shell.NativeApps
-import dev.halone.shell.WindowKind
-import dev.halone.shell.Sockets
-import dev.halone.shell.Shortcuts
-import dev.halone.shell.PackageApps
-import dev.halone.shell.WebApp
-import dev.halone.shell.WebAppControl
-import dev.halone.shell.WebApps
-import dev.halone.shell.WebManifest
 import dev.halone.app.panel.BrowserEngine
 import dev.halone.app.panel.BrowserHost
 import dev.halone.app.panel.GeckoExtensions
 import dev.halone.app.panel.GeckoKeyboard
 import dev.halone.app.panel.GeckoPanel
 import dev.halone.app.panel.WebAppEngine
-import org.mozilla.geckoview.GeckoSessionSettings
 import dev.halone.app.stereo.GlassesStereoSession
+import dev.halone.compositor.CollisionPolicy
+import dev.halone.compositor.DockVisibility
+import dev.halone.compositor.Panel
+import dev.halone.compositor.SizeLimits
+import dev.halone.engine.plugin.PluginConnection
+import dev.halone.engine.plugin.PluginDirectory
+import dev.halone.engine.plugin.PluginIcons
+import dev.halone.engine.plugin.PluginPanelEngine
+import dev.halone.engine.plugin.PluginWindow
+import dev.halone.engine.webview.BridgeConnector
+import dev.halone.engine.webview.SelectPopup
+import dev.halone.engine.webview.TextField
+import dev.halone.engine.webview.WebViewEngine
+import dev.halone.glasses.api.BrightnessControl
+import dev.halone.plugin.PluginContract
+import dev.halone.shell.AppInfo
+import dev.halone.shell.Battery
+import dev.halone.shell.Bookmarks
+import dev.halone.shell.BridgeHost
+import dev.halone.shell.BrowserControl
+import dev.halone.shell.BrowserData
+import dev.halone.shell.BrowserHistory
+import dev.halone.shell.Downloads
+import dev.halone.shell.FileRoot
+import dev.halone.shell.FileServer
+import dev.halone.shell.HalonePackage
+import dev.halone.shell.InstalledApp
+import dev.halone.shell.Media
+import dev.halone.shell.MenuItem
+import dev.halone.shell.NativeApp
+import dev.halone.shell.NativeApps
+import dev.halone.shell.PackageApps
+import dev.halone.shell.PluginPackage
+import dev.halone.shell.ProvidedApp
+import dev.halone.shell.ProvidedStatusItem
+import dev.halone.shell.SharedFiles
+import dev.halone.shell.Shell
+import dev.halone.shell.ShellPlatform
+import dev.halone.shell.ShellSettings
+import dev.halone.shell.Shortcuts
+import dev.halone.shell.Sockets
+import dev.halone.shell.StorageAccess
+import dev.halone.shell.SystemInfo
+import dev.halone.shell.WebApp
+import dev.halone.shell.WebAppControl
+import dev.halone.shell.WebApps
+import dev.halone.shell.WebManifest
+import dev.halone.shell.WindowKind
 import java.util.concurrent.Executors
 import kotlin.math.roundToInt
+import org.mozilla.geckoview.GeckoSessionSettings
 
 /**
  * The shell on the glasses: system apps from `https://halone.local/` on WebView
@@ -86,7 +87,7 @@ class ShellSession(
     /** Asks the wearer, on the phone, for Android permissions; told which were granted. */
     private val requestPermissions: (Array<String>, (Set<String>) -> Unit) -> Unit,
     private val log: (String) -> Unit,
-) : ShellPlatform {
+) : ShellPlatform<Panel> {
     private val handler = Handler(Looper.getMainLooper())
     private val hardware = Executors.newSingleThreadExecutor()
     private val poller = object : Runnable {
@@ -111,7 +112,7 @@ class ShellSession(
     private val pluginConnections = HashMap<String, PluginConnection>()
     private val pluginWindows = HashMap<String, PluginPanelEngine>()
     private val pluginIcons = PluginIcons(java.io.File(context.filesDir, "plugin-icons"), { pluginConnections[it] }, log)
-    private val nativeApps = NativeApps(FileStore(context, "plugins.json", hardware))
+    private val nativeApps = NativeApps(FileStore(context, "plugins.json", hardware), PluginContract.VERSION)
     private val mediaBackend = MediaPlayerBackend({ stereo.compositor }, log)
     private val notices = TransientNotice { stereo.compositor }
     private val volume = VolumeIndicator(context, notices)
@@ -203,7 +204,7 @@ class ShellSession(
             runCatching { shell.launchNative("${plugin.packageName}/$appId", args) }.onFailure { log("  plugins: ${plugin.packageName} could not launch $appId: $it") }
         }
 
-        override fun onStatusItem(plugin: PluginPackage, id: String, item: dev.halone.engine.plugin.ProvidedStatusItem?) {
+        override fun onStatusItem(plugin: PluginPackage, id: String, item: ProvidedStatusItem?) {
             if (item != null) shell.statusItems.set(plugin.packageName, item) else shell.statusItems.remove(plugin.packageName, id)
         }
 
@@ -532,7 +533,7 @@ class ShellSession(
         return panel
     }
 
-    override fun openNativeApp(windowId: String, app: NativeApp, args: android.os.Bundle?): Panel? {
+    override fun openNativeApp(windowId: String, app: NativeApp, args: Any?): Panel? {
         val window = object : PluginWindow {
             override fun setTitle(title: String) = act { shell.setTitle(windowId, title) }
             override fun close() = act { shell.close(windowId) }
@@ -548,7 +549,7 @@ class ShellSession(
             }
         }
         val engine = PluginPanelEngine(
-            pluginConnections[app.packageName], app.app.id, args ?: android.os.Bundle(), app.app.name,
+            pluginConnections[app.packageName], app.app.id, args as android.os.Bundle? ?: android.os.Bundle(), app.app.name,
             app.app.widthPx, app.app.heightPx, window, log, pluginKeyboard,
         )
         val panel = stereo.openPanel(windowId, engine, verticalFill = fillFor(app.app.heightPx), distanceMetres = distance())

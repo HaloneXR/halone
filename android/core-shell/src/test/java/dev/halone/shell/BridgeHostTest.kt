@@ -1,6 +1,5 @@
 package dev.halone.shell
 
-import dev.halone.compositor.Scene
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -15,7 +14,7 @@ class BridgeHostTest {
     private val host = BridgeHost(shell, SystemInfo("test", "Test Glasses", 19.0, 1920, 1080))
     private var nextId = 1
 
-    private fun connected(appId: String): Pair<ShellWindow, FakeChannel> {
+    private fun connected(appId: String): Pair<ShellWindow<FakePanel>, FakeChannel> {
         val window = shell.launch(appId)
         val channel = FakeChannel()
         host.connect(window.id, channel)

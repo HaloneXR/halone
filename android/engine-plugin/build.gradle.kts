@@ -30,6 +30,7 @@ android {
 
 dependencies {
     api(project(":core-compositor"))
+    api(project(":core-shell"))
     api(libs.halone.plugin.sdk)
     testImplementation(libs.junit)
 }

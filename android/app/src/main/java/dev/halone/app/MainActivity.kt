@@ -2073,7 +2073,7 @@ class MainActivity : AppCompatActivity() {
         return event.keyCode in shortcutKeys
     }
 
-    private fun runShortcut(shell: dev.halone.shell.Shell, chord: KeyChord, captureOn: Boolean): Boolean {
+    private fun runShortcut(shell: dev.halone.shell.Shell<*>, chord: KeyChord, captureOn: Boolean): Boolean {
         val target = stereoSession?.scene?.keyTarget?.let { panel -> shell.windows().firstOrNull { it.panel === panel } }
         val action = shellSession?.shortcuts?.resolve(chord, inBrowser = target?.kind == dev.halone.shell.WindowKind.WEB, captureOn = captureOn)
             ?: return false

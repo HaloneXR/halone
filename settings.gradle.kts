@@ -31,17 +31,17 @@ val desktopOnly = providers.gradleProperty("halone.desktopOnly").map { it != "fa
 if (!desktopOnly) includeBuild("sdk/android")
 
 // Layers, bottom up. No module depends on one above it.
-val androidModules = setOf("core-glasses-usb", "core-display", "core-compositor", "engine-webview", "engine-plugin", "core-shell", "app")
+val androidModules = setOf("core-glasses-usb", "core-display", "core-compositor", "engine-webview", "engine-plugin", "app")
 listOf(
     "core-scene",
     "core-glasses",
     "core-glasses-usb",
     "core-compositor-common",
+    "core-shell",
     "core-display",
     "core-compositor",
     "engine-webview",
     "engine-plugin",
-    "core-shell",
     "app",
 ).filter { !desktopOnly || it !in androidModules }.forEach { name ->
     include(":$name")

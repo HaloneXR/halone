@@ -1,6 +1,5 @@
 package dev.halone.shell
 
-import dev.halone.compositor.Scene
 import dev.halone.compositor.StereoLayout
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -14,7 +13,7 @@ class BridgeWindowsTest {
     private val host = BridgeHost(shell, SystemInfo("test", "Test Glasses", 19.0, 1920, 1080))
     private var nextId = 1
 
-    private fun connected(appId: String): Pair<ShellWindow, FakeChannel> {
+    private fun connected(appId: String): Pair<ShellWindow<FakePanel>, FakeChannel> {
         val window = shell.launch(appId)
         val channel = FakeChannel()
         host.connect(window.id, channel)

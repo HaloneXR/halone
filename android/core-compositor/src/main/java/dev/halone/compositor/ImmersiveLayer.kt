@@ -2,19 +2,6 @@ package dev.halone.compositor
 
 import android.graphics.SurfaceTexture
 
-enum class MediaProjection(val wire: String) {
-    FLAT("flat"),
-    EQUIRECT_180("equirect-180"),
-    EQUIRECT_360("equirect-360"),
-}
-
-/** How a frame holds the two eyes' pictures; the left eye is on the left or on top. */
-enum class StereoLayout(val wire: String) {
-    MONO("mono"),
-    SIDE_BY_SIDE("side-by-side"),
-    TOP_BOTTOM("top-bottom"),
-}
-
 /**
  * A video drawn behind every panel: around the wearer as a sphere, or on a
  * screen in the room, with each eye taking its own half of a stereo frame.

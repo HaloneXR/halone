@@ -1,6 +1,5 @@
 package dev.halone.shell
 
-import dev.halone.compositor.Scene
 import java.io.File
 import java.nio.file.Files
 import org.json.JSONArray

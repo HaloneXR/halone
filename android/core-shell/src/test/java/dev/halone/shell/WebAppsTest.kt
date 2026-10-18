@@ -1,6 +1,5 @@
 package dev.halone.shell
 
-import dev.halone.compositor.Scene
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals

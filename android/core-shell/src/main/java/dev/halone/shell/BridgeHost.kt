@@ -27,7 +27,7 @@ interface BridgeChannel {
  * make it act as another window.
  */
 class BridgeHost(
-    private val shell: Shell,
+    private val shell: Shell<*>,
     private val systemInfo: SystemInfo,
     private val log: (String) -> Unit = {},
     private val files: SharedFiles? = null,

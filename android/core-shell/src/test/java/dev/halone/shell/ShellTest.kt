@@ -1,6 +1,5 @@
 package dev.halone.shell
 
-import dev.halone.compositor.Scene
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -21,7 +20,7 @@ class ShellTest {
 
         assertEquals("https://halone.local/settings/index.html", window.url)
         assertEquals(WindowKind.APP, window.kind)
-        assertEquals(1024, window.panel.engine.widthPx)
+        assertEquals(1024, window.panel.widthPx)
         assertTrue(window.panel in scene.panels)
     }
 
@@ -75,7 +74,7 @@ class ShellTest {
         val window = shell.launch("files")
         shell.close(window.id)
 
-        assertTrue((window.panel.engine as FakeEngine).closed)
+        assertTrue(window.panel.closed)
         assertTrue(shell.windows().isEmpty())
         assertEquals("no-such-window", assertThrows(HaloneException::class.java) { shell.find(window.id) }.code)
     }

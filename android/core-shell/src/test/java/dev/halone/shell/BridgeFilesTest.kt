@@ -1,6 +1,5 @@
 package dev.halone.shell
 
-import dev.halone.compositor.Scene
 import java.io.File
 import java.nio.file.Files
 import org.json.JSONObject
@@ -29,7 +28,7 @@ class BridgeFilesTest {
     )
     private var nextId = 1
 
-    private fun connected(appId: String): Pair<ShellWindow, FakeChannel> {
+    private fun connected(appId: String): Pair<ShellWindow<FakePanel>, FakeChannel> {
         val window = shell.launch(appId)
         val channel = FakeChannel()
         host.connect(window.id, channel)

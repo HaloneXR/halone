@@ -1,7 +1,8 @@
-package dev.halone.shell
+package dev.halone.app.shell
 
 import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebMessagePortCompat
+import dev.halone.shell.BridgeChannel
 
 /** A [BridgeChannel] over a WebView message port. Callbacks arrive on the UI thread. */
 class WebMessagePortChannel(private val port: WebMessagePortCompat) : BridgeChannel {

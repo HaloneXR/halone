@@ -8,26 +8,25 @@ class Panel(
     val engine: PanelEngine,
     pose: PanelPose,
     follow: SmoothFollow = SmoothFollow(),
-) : ScenePanel(id, pose, follow) {
+) : ScenePanel(id, pose, follow), WindowPanel {
 
     override val widthPx: Int get() = engine.widthPx
     override val heightPx: Int get() = engine.heightPx
 
-    /** Shown in the title bar; the shell keeps it current. */
     @Volatile
-    var title: String = id
+    override var title: String = id
 
-    /** A short label beside the title, such as "web", or null for none. */
     @Volatile
-    var tag: String? = null
+    override var tag: String? = null
 
     /** Corner radius in the panel's pixels; the dock is a pill. */
     @Volatile
     var cornerRadiusPx: Float = 24f
 
-    /** Part of the window holding a stereo picture, each eye shown its own half; null for none. */
     @Volatile
-    var stereoRegion: StereoRegion? = null
+    override var stereoRegion: StereoRegion? = null
+
+    override fun resizeContent(widthPx: Int, heightPx: Int) = engine.resize(widthPx, heightPx)
 
     /** Set by the compositor once phase one of the engine handshake has run. */
     @Volatile
@@ -77,6 +76,3 @@ class Panel(
         fun wrapPi(angle: Float): Float = ScenePanel.wrapPi(angle)
     }
 }
-
-/** In the window's own pixels, y down. [layout] is never [StereoLayout.MONO]. */
-data class StereoRegion(val layout: StereoLayout, val xPx: Float, val yPx: Float, val widthPx: Float, val heightPx: Float)

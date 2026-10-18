@@ -15,11 +15,11 @@ import androidx.activity.ComponentActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.webkit.WebViewAssetLoader
+import dev.halone.app.shell.WebMessagePortChannel
 import dev.halone.engine.webview.BridgeConnector
 import dev.halone.engine.webview.WebViewBridge
 import dev.halone.engine.webview.WebViewEngine
 import dev.halone.shell.BridgeHost
-import dev.halone.shell.WebMessagePortChannel
 
 /**
  * The Settings app on the phone's own screen, over everything else, talking

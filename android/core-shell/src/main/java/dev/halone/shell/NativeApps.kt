@@ -1,7 +1,5 @@
 package dev.halone.shell
 
-import dev.halone.engine.plugin.PluginPackage
-import dev.halone.engine.plugin.ProvidedApp
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
@@ -62,9 +60,10 @@ data class PluginInfo(val plugin: PluginPackage, val state: PluginState, val app
  * enables it again. The apps each plugin listed last are kept, so the
  * launcher and the dock have them before the plugin connects.
  *
- * Call on one thread.
+ * [contractVersion] is the newest plugin contract this host speaks. Call on
+ * one thread.
  */
-class NativeApps(private val store: SettingsStore) {
+class NativeApps(private val store: SettingsStore, private val contractVersion: Int) {
     private class Record(var certificate: String?, var apps: List<ProvidedApp>)
 
     private val records = LinkedHashMap<String, Record>()
@@ -106,7 +105,7 @@ class NativeApps(private val store: SettingsStore) {
         val plugin = found[packageName] ?: return null
         val certificate = records[packageName]?.certificate
         return when {
-            !plugin.compatible -> PluginState.INCOMPATIBLE
+            !compatible(plugin) -> PluginState.INCOMPATIBLE
             certificate == null -> PluginState.DISABLED
             certificate != plugin.certificate -> PluginState.CERTIFICATE_CHANGED
             else -> PluginState.ENABLED
@@ -115,7 +114,7 @@ class NativeApps(private val store: SettingsStore) {
 
     fun setEnabled(packageName: String, enabled: Boolean) {
         val plugin = found[packageName] ?: throw HaloneException("no-such-plugin", "no such plugin: $packageName")
-        if (enabled && !plugin.compatible) throw HaloneException("incompatible", "${plugin.label} needs a newer Halone")
+        if (enabled && !compatible(plugin)) throw HaloneException("incompatible", "${plugin.label} needs a newer Halone")
         val record = records.getOrPut(packageName) { Record(null, emptyList()) }
         val certificate = if (enabled) plugin.certificate else null
         if (record.certificate == certificate) return
@@ -134,6 +133,8 @@ class NativeApps(private val store: SettingsStore) {
     }
 
     /** The plugins that may run, which the platform keeps connected. */
+    private fun compatible(plugin: PluginPackage) = plugin.contract in 1..contractVersion
+
     fun runnable(): List<PluginPackage> = found.values.filter { stateOf(it.packageName) == PluginState.ENABLED }
 
     fun plugins(): List<PluginInfo> = found.values.map { plugin ->

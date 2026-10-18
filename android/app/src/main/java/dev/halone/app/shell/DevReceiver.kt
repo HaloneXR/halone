@@ -36,7 +36,7 @@ import org.json.JSONObject
  */
 class DevReceiver(
     private val context: Context,
-    private val shell: Shell,
+    private val shell: Shell<*>,
     private val background: Executor,
     private val log: (String) -> Unit,
 ) : BroadcastReceiver() {

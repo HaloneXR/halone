@@ -7,6 +7,7 @@ import android.os.Looper
 import dev.halone.compositor.Panel
 import dev.halone.compositor.Scene
 import dev.halone.engine.plugin.PluginDirectory
+import dev.halone.plugin.PluginContract
 import dev.halone.shell.AppInfo
 import dev.halone.shell.BridgeHost
 import dev.halone.shell.NativeApps
@@ -21,10 +22,10 @@ import java.util.concurrent.Executors
  * same settings and plugins the environment reads, and a bridge for the page,
  * but no scene to open windows in.
  */
-class PhoneShell(private val context: Context, deviceName: String, log: (String) -> Unit) : ShellPlatform {
+class PhoneShell(private val context: Context, deviceName: String, log: (String) -> Unit) : ShellPlatform<Panel> {
     private val handler = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
-    private val nativeApps = NativeApps(FileStore(context, "plugins.json", io))
+    private val nativeApps = NativeApps(FileStore(context, "plugins.json", io), PluginContract.VERSION)
     private val pluginDirectory = PluginDirectory(context, log)
 
     private val shell = Shell(

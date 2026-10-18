@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import dev.halone.plugin.PluginContract
+import dev.halone.shell.PluginPackage
 import java.security.MessageDigest
 
 /**

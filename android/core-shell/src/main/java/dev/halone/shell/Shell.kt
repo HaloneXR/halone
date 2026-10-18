@@ -1,28 +1,29 @@
 package dev.halone.shell
 
 import dev.halone.compositor.Corner
-import dev.halone.compositor.Panel
-import dev.halone.compositor.Scene
+import dev.halone.compositor.PanelScene
+import dev.halone.compositor.ScenePanel
 import dev.halone.compositor.SizeLimits
 import dev.halone.compositor.StereoRegion
+import dev.halone.compositor.WindowPanel
 import org.json.JSONObject
 
-/** What the shell needs from whatever hosts it: engines, the head, and the hardware. */
-interface ShellPlatform {
+/** What the shell needs from whatever hosts it: engines, the head, and the hardware; [P] is its kind of panel. */
+interface ShellPlatform<P : WindowPanel> {
     /** A system app on WebView with the bridge; null when there is nowhere to show it. */
-    fun openApp(windowId: String, app: AppInfo, url: String): Panel?
+    fun openApp(windowId: String, app: AppInfo, url: String): P?
 
     /** Arbitrary web content, without the bridge; [private] makes its first tab a private one. */
-    fun openWeb(windowId: String, url: String, private: Boolean = false): Panel?
+    fun openWeb(windowId: String, url: String, private: Boolean = false): P?
 
     /** An installed web app at [url], without the browser's chrome and without the bridge. */
-    fun openWebApp(windowId: String, app: WebApp, url: String): Panel? = null
+    fun openWebApp(windowId: String, app: WebApp, url: String): P? = null
 
     /** A Halone app from a package, on WebView with the bridge, in its own origin; [files] is null for a dev app. */
-    fun openPackageApp(windowId: String, app: InstalledApp, files: java.io.File?, url: String): Panel? = null
+    fun openPackageApp(windowId: String, app: InstalledApp, files: java.io.File?, url: String): P? = null
 
-    /** A plugin app's window; [args] are what the plugin asked to open it with, or null from the launcher. */
-    fun openNativeApp(windowId: String, app: NativeApp, args: android.os.Bundle?): Panel? = null
+    /** A plugin app's window; [args] are what the plugin asked to open it with, in the platform's own form, or null from the launcher. */
+    fun openNativeApp(windowId: String, app: NativeApp, args: Any?): P? = null
 
     /** Brings plugin window [windowId] back to life if its plugin stopped, before it is focused. */
     fun reopenNativeApp(windowId: String) {}
@@ -48,7 +49,7 @@ interface ShellPlatform {
     /** Opens the dock and the launcher, which live outside the arrangement. */
     fun openOverlays(dock: AppInfo, dockUrl: String, launcher: AppInfo, launcherUrl: String)
 
-    fun close(panel: Panel)
+    fun close(panel: P)
 
     fun recenter()
 
@@ -59,7 +60,7 @@ interface ShellPlatform {
     fun applySettings(settings: ShellSettings, changedKey: String?)
 
     /** A window was asked to come to the front, for a platform that wants to watch it happen. */
-    fun onFocusRequested(panel: Panel) {}
+    fun onFocusRequested(panel: P) {}
 
     /** The tabs and navigation of a web window, or null for any other. */
     fun browser(windowId: String): BrowserControl? = null
@@ -128,14 +129,14 @@ data class Battery(val level: Double, val charging: Boolean)
 
 enum class WindowKind(val wire: String) { APP("app"), WEB("web"), NATIVE("native") }
 
-class ShellWindow(
+class ShellWindow<P>(
     val id: String,
     val kind: WindowKind,
     val appId: String?,
     var title: String,
     var url: String,
-    val panel: Panel,
-) {
+    val panel: P,
+) where P : ScenePanel, P : WindowPanel {
     /** The file the window was last asked to open. */
     var openedFile: String? = null
 
@@ -149,19 +150,19 @@ class ShellWindow(
 /**
  * The window manager behind `halone.windows`, `halone.apps` and `halone.settings`.
  *
- * Arrangement, following and collision stay in [Scene]; the shell adds what a
+ * Arrangement, following and collision stay in [PanelScene]; the shell adds what a
  * window is — which app, what title, whether it gets the bridge — and turns
  * requests into scene operations. Call on the UI thread.
  */
-class Shell(
-    private val scene: Scene,
+class Shell<P>(
+    private val scene: PanelScene<P>,
     private val systemApps: List<AppInfo>,
     val settings: ShellSettings,
-    private val platform: ShellPlatform,
+    private val platform: ShellPlatform<P>,
     val webApps: WebApps? = null,
     val packageApps: PackageApps? = null,
     val nativeApps: NativeApps? = null,
-) {
+) where P : ScenePanel, P : WindowPanel {
     /** The system apps, then the sites installed as apps, then the Halone apps, then the plugins' apps. */
     val apps: List<AppInfo>
         get() = systemApps +
@@ -181,7 +182,7 @@ class Shell(
     /** What plugins show in the dock's status area. */
     val statusItems = StatusItems()
 
-    private val windows = LinkedHashMap<String, ShellWindow>()
+    private val windows = LinkedHashMap<String, ShellWindow<P>>()
     private val listeners = mutableListOf<ShellListener>()
     private var nextWindow = 1
     private var lastFocused: String? = null
@@ -247,9 +248,9 @@ class Shell(
         listeners += listener
     }
 
-    fun windows(): List<ShellWindow> = windows.values.toList()
+    fun windows(): List<ShellWindow<P>> = windows.values.toList()
 
-    fun find(id: String): ShellWindow =
+    fun find(id: String): ShellWindow<P> =
         windows[id] ?: throw HaloneException("no-such-window", "no such window: $id")
 
     /** Opens the dock and the launcher; called once the platform can show them. */
@@ -354,7 +355,7 @@ class Shell(
         listeners.forEach { it.onBatteryChanged(battery) }
     }
 
-    fun launch(appId: String, route: String? = null): ShellWindow {
+    fun launch(appId: String, route: String? = null): ShellWindow<P> {
         if (appId in overlayIds) throw HaloneException("no-such-app", "$appId is part of the shell, not an app to launch")
         webApps?.find(appId)?.let { return launchWebApp(it, route) }
         packageApps?.find(appId)?.let { return launchPackageApp(it, route) }
@@ -374,7 +375,7 @@ class Shell(
         return add(ShellWindow(id, WindowKind.APP, app.id, app.name, url, panel).also { it.route = route })
     }
 
-    private fun launchPackageApp(app: InstalledApp, route: String?): ShellWindow {
+    private fun launchPackageApp(app: InstalledApp, route: String?): ShellWindow<P> {
         windows.values.firstOrNull { it.appId == app.id }?.let { window ->
             if (route != null) {
                 window.route = route
@@ -389,7 +390,7 @@ class Shell(
     }
 
     /** Focuses plugin app [appId]'s window, or opens one with [args], as the launcher does. */
-    fun launchNative(appId: String, args: android.os.Bundle?): ShellWindow {
+    fun launchNative(appId: String, args: Any?): ShellWindow<P> {
         val app = nativeApps?.find(appId) ?: throw HaloneException("no-such-app", "no such app: $appId")
         windows.values.firstOrNull { it.appId == appId }?.let { window ->
             platform.reopenNativeApp(window.id)
@@ -400,12 +401,12 @@ class Shell(
     }
 
     /** A new window of plugin app [appId], as the plugin asked, beside any it already has. */
-    fun openNativePanel(appId: String, args: android.os.Bundle?): ShellWindow {
+    fun openNativePanel(appId: String, args: Any?): ShellWindow<P> {
         val app = nativeApps?.find(appId) ?: throw HaloneException("no-such-app", "no such app: $appId")
         return openNative(app, args)
     }
 
-    private fun openNative(app: NativeApp, args: android.os.Bundle?): ShellWindow {
+    private fun openNative(app: NativeApp, args: Any?): ShellWindow<P> {
         val id = nextId()
         val panel = platform.openNativeApp(id, app, args) ?: throw unavailable()
         return add(ShellWindow(id, WindowKind.NATIVE, app.id, app.app.name, "", panel))
@@ -434,7 +435,7 @@ class Shell(
      * Opens a web app's window, or focuses the one already open; [url], when
      * inside the app, is where it goes instead of its start.
      */
-    private fun launchWebApp(app: WebApp, url: String?): ShellWindow {
+    private fun launchWebApp(app: WebApp, url: String?): ShellWindow<P> {
         val target = url?.takeIf(app::inScope)
         windows.values.firstOrNull { it.appId == app.id }?.let { window ->
             if (target != null) platform.webApp(window.id)?.navigate(target)
@@ -450,7 +451,7 @@ class Shell(
     }
 
     /** The app's name in the title bar, with the site's when the page has left the app, as for a sign-in. */
-    private fun onWebAppChanged(window: ShellWindow, app: WebApp, page: WebAppControl) {
+    private fun onWebAppChanged(window: ShellWindow<P>, app: WebApp, page: WebAppControl) {
         if (windows[window.id] !== window) return
         val url = page.url ?: return
         val outside = runCatching { java.net.URI(url).host }.getOrNull()?.takeIf { !app.inScope(url) }
@@ -552,7 +553,7 @@ class Shell(
     }
 
     /** Opens [path] in [appId], or in the first app that declares its type. */
-    fun openFile(path: String, mimeType: String?, appId: String? = null): ShellWindow {
+    fun openFile(path: String, mimeType: String?, appId: String? = null): ShellWindow<P> {
         val app = if (appId != null) {
             apps.firstOrNull { it.id == appId } ?: throw HaloneException("no-such-app", "no such app: $appId")
         } else {
@@ -565,7 +566,7 @@ class Shell(
         return window
     }
 
-    fun openUrl(url: String, private: Boolean = false): ShellWindow {
+    fun openUrl(url: String, private: Boolean = false): ShellWindow<P> {
         val parsed = webUrl(url)
         val id = nextId()
         val panel = platform.openWeb(id, url, private) ?: throw unavailable()
@@ -575,7 +576,7 @@ class Shell(
     }
 
     /** Opens [url] in a new tab of the web window used last, or in a new web window if none is open. */
-    fun openInBrowser(url: String, private: Boolean = false): ShellWindow {
+    fun openInBrowser(url: String, private: Boolean = false): ShellWindow<P> {
         webUrl(url)
         val window = lastWebWindow?.let { windows[it] } ?: windows.values.lastOrNull { it.kind == WindowKind.WEB }
             ?: return openUrl(url, private)
@@ -602,7 +603,7 @@ class Shell(
         if (cookies || cache) platform.clearBrowsingData(cookies, cache)
     }
 
-    fun webWindows(): List<ShellWindow> = windows.values.filter { it.kind == WindowKind.WEB }
+    fun webWindows(): List<ShellWindow<P>> = windows.values.filter { it.kind == WindowKind.WEB }
 
     fun browser(id: String): BrowserControl =
         platform.browser(find(id).id) ?: throw HaloneException("not-a-browser", "window $id is not a web window")
@@ -613,7 +614,7 @@ class Shell(
         if (browser.state().tabs.size <= 1) close(id) else browser.closeTab(tabId)
     }
 
-    private fun onBrowserChanged(window: ShellWindow, browser: BrowserControl) {
+    private fun onBrowserChanged(window: ShellWindow<P>, browser: BrowserControl) {
         if (windows[window.id] !== window) return
         val state = browser.state()
         state.active?.let { tab ->
@@ -708,7 +709,7 @@ class Shell(
         val oldWidth = panel.widthPx
         val oldHeight = panel.heightPx
         if (width != oldWidth || height != oldHeight) {
-            panel.engine.resize(width, height)
+            panel.resizeContent(width, height)
             scene.resized(panel, oldWidth, oldHeight, if (keepTop) Corner.TOP_LEFT else Corner.BOTTOM_LEFT)
             notifyWindows()
         }
@@ -783,9 +784,9 @@ class Shell(
         }
     }
 
-    fun isFocused(window: ShellWindow) = scene.focused === window.panel
+    fun isFocused(window: ShellWindow<*>) = scene.focused === window.panel
 
-    fun info(window: ShellWindow): JSONObject {
+    fun info(window: ShellWindow<*>): JSONObject {
         val pose = window.panel.pose
         return JSONObject()
             .put("id", window.id)
@@ -795,13 +796,13 @@ class Shell(
             .put("url", window.url)
             .put("yawDegrees", -Math.toDegrees(pose.yawRadians.toDouble()))
             .put("pitchDegrees", Math.toDegrees(pose.pitchRadians.toDouble()))
-            .put("widthPx", window.panel.engine.widthPx)
-            .put("heightPx", window.panel.engine.heightPx)
+            .put("widthPx", window.panel.widthPx)
+            .put("heightPx", window.panel.heightPx)
             .put("pinned", !window.panel.follow.enabled)
             .put("focused", isFocused(window))
     }
 
-    private fun add(window: ShellWindow): ShellWindow {
+    private fun add(window: ShellWindow<P>): ShellWindow<P> {
         window.panel.title = window.title
         window.panel.tag = if (window.kind == WindowKind.WEB) "web" else null
         windows[window.id] = window

@@ -11,6 +11,9 @@ import android.os.Looper
 import android.os.SystemClock
 import dev.halone.plugin.IPanelProvider
 import dev.halone.plugin.IProviderHost
+import dev.halone.shell.PluginPackage
+import dev.halone.shell.ProvidedApp
+import dev.halone.shell.ProvidedStatusItem
 import java.util.concurrent.Executor
 
 /**
@@ -69,7 +72,7 @@ class PluginConnection(
         }
 
         override fun setStatusItem(id: String?, item: Bundle?) {
-            val parsed = id?.let { item?.let { bundle -> ProvidedStatusItem.fromBundle(id, bundle) } }
+            val parsed = id?.let { item?.let { bundle -> providedStatusItemOf(id, bundle) } }
             if (parsed == null) {
                 log("  plugins: ${plugin.packageName} set an unusable status item '$id'")
                 return
@@ -173,7 +176,7 @@ class PluginConnection(
 
     fun refreshApps() {
         whenConnected { connected ->
-            val listed = runCatching { connected.listApps().orEmpty().mapNotNull { it?.let(ProvidedApp::fromBundle) }.distinctBy { it.id } }
+            val listed = runCatching { connected.listApps().orEmpty().mapNotNull { it?.let(::providedAppOf) }.distinctBy { it.id } }
             main.post {
                 if (!bound || provider !== connected) return@post
                 listed.onSuccess { listener?.onApps(plugin, it) }.onFailure { log("  plugins: ${plugin.packageName} could not list apps: $it") }

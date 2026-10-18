@@ -1,9 +1,5 @@
 package dev.halone.shell
 
-import dev.halone.compositor.Scene
-import dev.halone.engine.plugin.PluginPackage
-import dev.halone.engine.plugin.ProvidedApp
-import dev.halone.engine.plugin.ProvidedStatusItem
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotSame
@@ -14,7 +10,7 @@ import org.junit.Test
 
 class NativeAppsTest {
     private val store = MemoryStore()
-    private val apps = NativeApps(store)
+    private val apps = NativeApps(store, 1)
     private val scene = Scene()
     private val platform = FakePlatform(scene)
     private val shell = Shell(scene, APPS, ShellSettings(MemoryStore(), SCHEMA), platform, nativeApps = apps)
@@ -103,7 +99,7 @@ class NativeAppsTest {
     fun `the enablement and the last apps listed survive a restart, and a plugin gone is forgotten`() {
         enabledWith(app("pattern"))
 
-        val again = NativeApps(store)
+        val again = NativeApps(store, 1)
         again.update(listOf(plugin()))
         assertEquals(listOf("dev.example.plugin/pattern"), again.list().map { it.id })
 
@@ -117,7 +113,7 @@ class NativeAppsTest {
         enabledWith(app("pattern").copy(color = "#5b2a86"), app("views"))
         assertEquals(listOf("#5b2a86", null), apps.list().map { it.toAppInfo().color })
 
-        val again = NativeApps(store)
+        val again = NativeApps(store, 1)
         again.update(listOf(plugin()))
         assertEquals("#5b2a86", again.list().first().toAppInfo().color)
     }
@@ -129,7 +125,7 @@ class NativeAppsTest {
         val first = shell.launch("dev.example.plugin/views")
         assertEquals(WindowKind.NATIVE, first.kind)
         assertEquals("Views", first.title)
-        assertEquals(900, first.panel.engine.widthPx)
+        assertEquals(900, first.panel.widthPx)
         assertSame(first, shell.launch("dev.example.plugin/views"))
 
         val second = shell.openNativePanel("dev.example.plugin/views", null)

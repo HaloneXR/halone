@@ -7,14 +7,15 @@ import android.webkit.WebViewClient
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.webkit.WebViewAssetLoader
+import dev.halone.app.shell.WebMessagePortChannel
 import dev.halone.compositor.Panel
 import dev.halone.compositor.PanelEngine
 import dev.halone.compositor.PanelPose
 import dev.halone.compositor.Scene
 import dev.halone.engine.webview.TextField
 import dev.halone.engine.webview.WebViewBridge
-import dev.halone.engine.webview.WebViewTextInput
 import dev.halone.engine.webview.WebViewEngine
+import dev.halone.engine.webview.WebViewTextInput
 import dev.halone.shell.AppInfo
 import dev.halone.shell.BridgeHost
 import dev.halone.shell.SettingsStore
@@ -23,15 +24,14 @@ import dev.halone.shell.ShellPlatform
 import dev.halone.shell.ShellSettings
 import dev.halone.shell.ShellWindow
 import dev.halone.shell.SystemInfo
-import dev.halone.shell.WebMessagePortChannel
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import org.json.JSONTokener
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 
 /**
  * The built System app, the real SDK bundle, a real WebView message port and
@@ -44,7 +44,7 @@ class BridgeEndToEndTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context = instrumentation.targetContext
     private val scene = Scene()
-    private lateinit var shell: Shell
+    private lateinit var shell: Shell<Panel>
     private lateinit var host: BridgeHost
     private lateinit var webView: WebView
 
@@ -60,7 +60,7 @@ class BridgeEndToEndTest {
     private val fields = mutableListOf<TextField?>()
     private var textInput: WebViewTextInput? = null
 
-    private val platform = object : ShellPlatform {
+    private val platform = object : ShellPlatform<Panel> {
         override fun openApp(windowId: String, app: AppInfo, url: String) = open(windowId, app.widthPx, app.heightPx)
         override fun openWeb(windowId: String, url: String, private: Boolean): Panel {
             openedUrls += url
@@ -75,7 +75,7 @@ class BridgeEndToEndTest {
         override fun applySettings(settings: ShellSettings, changedKey: String?) = Unit
     }
 
-    private fun load(window: ShellWindow) {
+    private fun load(window: ShellWindow<Panel>) {
         val loader = WebViewAssetLoader.Builder()
             .setDomain(WebViewEngine.ASSET_DOMAIN)
             .addPathHandler("/", WebViewAssetLoader.AssetsPathHandler(context))

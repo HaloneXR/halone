@@ -1,6 +1,5 @@
 package dev.halone.shell
 
-import dev.halone.engine.plugin.ProvidedStatusItem
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Base64

@@ -34,7 +34,7 @@ Android app stays the product.
 |---|---|---|
 | `core-scene` | none, already KMP (JVM + JS) | as is |
 | `core-glasses` | `UsbHidTransport`, `DeviceDescriptorDump` | a hidapi transport; drivers, fusion, calibration and their replay tests as is |
-| `core-shell` | `WebMessagePortChannel`, `Bundle` in `Shell.kt` | as is once those are behind interfaces |
+| `core-shell` | `WebMessagePortChannel`, `Bundle`, and Android's `Panel`/`Scene`/`PanelEngine` and plugin types | as is; now plain JVM (see Changes to main) |
 | `core-compositor` | GLES, EGL, `SurfaceTexture`, OES textures | GL layer ported; scene logic as is |
 | `core-display` | `DisplayManager`, `Presentation` | rewritten: the glasses are an ordinary monitor |
 | `engine-webview`, GeckoView | entirely | replaced by a CEF engine |
@@ -338,8 +338,19 @@ change only when a phase needs it:
    branch as its own commit, ready to move to `main`.
 2. `PanelEngine` returns a texture source instead of a `SurfaceTexture`
    (phase 4).
-3. `Bundle` and `WebMessagePortChannel` leave `core-shell`'s public surface
-   (phase 5).
+3. `core-shell` becomes a plain Kotlin/JVM module (phase 5). Done on this
+   branch as its own commit:
+   - `Shell`, `ShellPlatform` and `ShellWindow` are generic over the panel
+     type, bounded by `ScenePanel` and a new `WindowPanel` interface (title,
+     tag, stereo region, content resize) in `core-compositor-common`, which
+     Android's `Panel` implements.
+   - `StereoLayout`, `StereoRegion` and `MediaProjection` move to
+     `core-compositor-common`.
+   - `WebMessagePortChannel` moves to the app; plugin apps' arguments are
+     the platform's own (`Any?`, a `Bundle` on Android).
+   - The plugin data classes move into `core-shell`; their `Bundle`
+     factories stay in `engine-plugin`, and `NativeApps` is told the
+     contract version.
 4. The plugin contract is described once and the AIDL side follows it
    (phase 6).
 
