@@ -56,4 +56,18 @@ class FrameAimTest {
         aim.onPresented(sampleNs = hostNow, actualNs = hostNow + 2 * period, refreshNs = period)
         assertTrue(aim.ready)
     }
+
+    @Test
+    fun `samples jittering across a refresh still aim at the refresh they land on`() {
+        val aim = aim()
+        val jitter = listOf(-300_000L, 200_000L, -100_000L, 400_000L, -250_000L, 50_000L)
+        var vsync = hostNow
+        repeat(240) { i ->
+            vsync += period
+            val sample = vsync + jitter[i % jitter.size]
+            val actual = vsync + period
+            if (i >= 120) assertEquals(actual.toDouble(), aim.photonHostNs(sample).toDouble(), 1_000.0)
+            aim.onPresented(sampleNs = sample, actualNs = actual, refreshNs = period)
+        }
+    }
 }

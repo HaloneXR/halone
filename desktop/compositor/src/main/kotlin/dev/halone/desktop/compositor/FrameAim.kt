@@ -4,8 +4,12 @@ import dev.halone.glasses.fusion.DisplayClock
 import dev.halone.glasses.fusion.HeadPose
 import dev.halone.glasses.fusion.HeadTracker
 import dev.halone.glasses.math.Quaternion
-import kotlin.math.ceil
+import kotlin.math.PI
+import kotlin.math.atan2
+import kotlin.math.cos
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
+import kotlin.math.sin
 
 /**
  * Where a frame will land, and the poses to draw and warp it with.
@@ -32,6 +36,8 @@ class FrameAim(private val clock: DisplayClock, private val tracker: HeadTracker
     private val ahead = ArrayDeque<Int>()
     private var anchorHostNs = 0L
     private var measuredPeriodNs = 0.0
+    private var phaseCos = 0.0
+    private var phaseSin = 0.0
 
     /**
      * Set where nothing reports present times (RADV on Wayland): frames are then
@@ -49,7 +55,10 @@ class FrameAim(private val clock: DisplayClock, private val tracker: HeadTracker
         if (actualNs <= 0 || refreshNs <= 0) return
         measuredPeriodNs = refreshNs.toDouble()
         anchorHostNs = actualNs
-        val k = ((actualNs - vsyncAfter(sampleNs)) / measuredPeriodNs).roundToInt()
+        val angle = 2 * PI * Math.floorMod(sampleNs - anchorHostNs, refreshNs) / measuredPeriodNs
+        phaseCos += (cos(angle) - phaseCos) * PHASE_SMOOTHING
+        phaseSin += (sin(angle) - phaseSin) * PHASE_SMOOTHING
+        val k = ((actualNs - referenceVsync(sampleNs)) / measuredPeriodNs).roundToInt()
         ahead.addLast(k)
         if (ahead.size > HISTORY) ahead.removeFirst()
     }
@@ -57,8 +66,15 @@ class FrameAim(private val clock: DisplayClock, private val tracker: HeadTracker
     /** Whole refreshes between the one after sampling and the one the frame is shown on; the median of recent frames. */
     val refreshesAhead: Int get() = clockGridAhead ?: ahead.sorted().let { if (it.isEmpty()) 1 else it[it.size / 2] }
 
-    private fun vsyncAfter(hostNs: Long): Long =
-        anchorHostNs + (ceil((hostNs - anchorHostNs) / measuredPeriodNs) * measuredPeriodNs).toLong()
+    /**
+     * The refresh a sample counts from: the grid line at the samples' usual phase. A loop
+     * woken by the flip samples right at a refresh, where the next one after it flips
+     * with sub-millisecond jitter; rounding from the usual phase keeps the count steady.
+     */
+    private fun referenceVsync(sampleNs: Long): Long {
+        val usualNs = atan2(phaseSin, phaseCos) / (2 * PI) * measuredPeriodNs
+        return anchorHostNs + (((sampleNs - usualNs - anchorHostNs) / measuredPeriodNs).roundToLong() * measuredPeriodNs).toLong()
+    }
 
     /** Host time at which a frame sampled at [sampleNs] should reach the display. */
     fun photonHostNs(sampleNs: Long): Long {
@@ -66,7 +82,7 @@ class FrameAim(private val clock: DisplayClock, private val tracker: HeadTracker
             val offset = clock.deviceTimeAt(sampleNs) - sampleNs
             return clock.refreshAfter(clock.deviceTimeAt(sampleNs), 1 + count) - offset
         }
-        return vsyncAfter(sampleNs) + (refreshesAhead * measuredPeriodNs).toLong()
+        return referenceVsync(sampleNs) + (refreshesAhead * measuredPeriodNs).toLong()
     }
 
     private fun firstRowDeviceNs(photonHostNs: Long): Long =
@@ -88,5 +104,6 @@ class FrameAim(private val clock: DisplayClock, private val tracker: HeadTracker
 
     private companion object {
         const val HISTORY = 120
+        const val PHASE_SMOOTHING = 0.05
     }
 }
