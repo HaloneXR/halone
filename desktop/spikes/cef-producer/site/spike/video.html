@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Spike video</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  video { width: 100%; height: 100%; object-fit: contain; display: block; }
+</style>
+</head>
+<body>
+<video id="video" autoplay loop muted playsinline></video>
+<script>
+  const video = document.getElementById('video');
+  video.src = new URLSearchParams(location.search).get('src') || 'video-vp9.webm';
+  video.addEventListener('playing', () => console.log(`video playing ${video.src} ${video.videoWidth}x${video.videoHeight}`));
+  video.addEventListener('error', () => console.log(`video error ${video.error && video.error.message}`));
+  let lastTotal = 0, lastDropped = 0;
+  setInterval(() => {
+    const q = video.getVideoPlaybackQuality();
+    console.log(`video decoded ${((q.totalVideoFrames - lastTotal) / 2).toFixed(1)} fps, dropped ${q.droppedVideoFrames - lastDropped}`);
+    lastTotal = q.totalVideoFrames;
+    lastDropped = q.droppedVideoFrames;
+  }, 2000);
+</script>
+</body>
+</html>

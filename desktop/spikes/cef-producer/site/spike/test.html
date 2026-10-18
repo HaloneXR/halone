@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Spike test</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; font: 16px/1.4 system-ui, sans-serif; background: #111; color: #eee; overflow: hidden; }
+  main { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px; height: 100vh; box-sizing: border-box; }
+  .spinner { width: 160px; height: 160px; margin: 24px auto; border-radius: 24px;
+             background: linear-gradient(135deg, #4cf, #c4f); animation: spin 2s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  canvas { width: 100%; height: 200px; background: #000; border-radius: 8px; }
+  #log { font: 13px/1.3 ui-monospace, monospace; white-space: pre; overflow: hidden; height: 100%; margin: 0;
+         background: #1b1b1b; border-radius: 8px; padding: 8px; }
+  input, button { font: inherit; padding: 8px 12px; border-radius: 8px; border: 1px solid #555; background: #222; color: #eee; }
+  button:hover { background: #335; }
+  .scroller { height: 120px; overflow: auto; background: #1b1b1b; border-radius: 8px; margin-top: 12px; }
+  .scroller div { padding: 6px 10px; border-bottom: 1px solid #2a2a2a; }
+  #fps { font-size: 28px; font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+  <section>
+    <div id="fps">– fps</div>
+    <div class="spinner"></div>
+    <canvas id="canvas" width="800" height="200"></canvas>
+    <p><input id="text" placeholder="Type here"> <button id="button">Click me</button></p>
+    <div class="scroller" id="scroller"></div>
+  </section>
+  <pre id="log"></pre>
+</main>
+<script>
+  const log = document.getElementById('log');
+  const lines = [];
+  function note(text) {
+    console.log('input: ' + text);
+    lines.unshift(text);
+    lines.length = Math.min(lines.length, 40);
+    log.textContent = lines.join('\n');
+  }
+
+  for (let i = 1; i <= 50; i++) {
+    const row = document.createElement('div');
+    row.textContent = 'Row ' + i;
+    document.getElementById('scroller').append(row);
+  }
+
+  let moves = 0;
+  addEventListener('mousemove', e => { if (++moves % 20 === 0) note(`mousemove ${e.clientX},${e.clientY} buttons=${e.buttons}`); });
+  addEventListener('mousedown', e => note(`mousedown button=${e.button} at ${e.clientX},${e.clientY}`));
+  addEventListener('mouseup', e => note(`mouseup button=${e.button}`));
+  addEventListener('contextmenu', e => { e.preventDefault(); note('contextmenu'); });
+  addEventListener('wheel', e => note(`wheel dx=${e.deltaX.toFixed(0)} dy=${e.deltaY.toFixed(0)}`));
+  addEventListener('keydown', e => note(`keydown key=${e.key} code=${e.code}`));
+  document.getElementById('button').addEventListener('click', () => note('button clicked'));
+  document.getElementById('text').addEventListener('input', e => note(`text is now "${e.target.value}"`));
+  document.getElementById('scroller').addEventListener('scroll', e => note(`scroller at ${e.target.scrollTop}`));
+
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  let frames = 0, last = performance.now();
+  function frame(now) {
+    frames++;
+    if (now - last >= 2000) {
+      const fps = frames * 1000 / (now - last);
+      document.getElementById('fps').textContent = fps.toFixed(1) + ' fps';
+      console.log('raf fps ' + fps.toFixed(1));
+      frames = 0;
+      last = now;
+    }
+    ctx.fillStyle = 'rgba(0,0,0,0.15)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const x = (now / 4) % canvas.width;
+    ctx.fillStyle = `hsl(${(now / 10) % 360} 80% 60%)`;
+    ctx.beginPath();
+    ctx.arc(x, 100 + 60 * Math.sin(now / 300), 24, 0, Math.PI * 2);
+    ctx.fill();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  addEventListener('load', () => {
+    for (const id of ['button', 'text', 'scroller']) {
+      const r = document.getElementById(id).getBoundingClientRect();
+      console.log(`layout ${id} ${Math.round(r.x + r.width / 2)},${Math.round(r.y + r.height / 2)}`);
+    }
+  });
+</script>
+</body>
+</html>

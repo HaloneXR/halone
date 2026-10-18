@@ -90,6 +90,17 @@ CEF renders a Halone system app offscreen with shared textures enabled
 - Check: whether JCEF exposes accelerated paint or needs a JNI shim; which
   platforms the CEF version supports shared textures on.
 - Decides: the host stack (JVM + JCEF, or native).
+- **Done 2026-10-18 on a 60 Hz display; it holds.** Three panels plus 1080p60
+  video (hardware-decoded VP9 or AV1) run at 60 fps with a 14 ms begin-frame
+  margin, using a third to a half of one core across CEF, and all input types
+  reach the page. The engine runs as its own native producer process, so the
+  host stack question becomes "which graphics API", not "JCEF or native": JCEF
+  isn't needed. Open items: an adaptive margin per producer; a repaint safety
+  net for static pages; no H.264, HEVC or AAC in stock CEF builds; and refresh
+  rates above 60 Hz still to measure. CEF 154 documents shared textures on
+  Windows (D3D11/12 handles) and Linux (dmabuf planes) too, but only macOS was
+  tried. See
+  [desktop/spikes/cef-producer](../desktop/spikes/cef-producer/README.md).
 
 ### 3. Glasses on desktop, headless
 
