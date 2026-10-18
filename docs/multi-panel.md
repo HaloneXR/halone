@@ -28,7 +28,7 @@ other, and when the arrangement moves at all.
 | Elevation a drag may reach | `Scene.MAX_PLACEMENT_PITCH` | 25° |
 | Catch-up after a deliberate turn | `Scene.catchUpSeconds` | 0.2 s, floor 150°/s |
 | Panel behind anchor, head-triggered | `Scene.TIGHT_TRACKING_SECONDS` | 0.1 s |
-| Lift while a panel is held | `StereoCompositor.GRAB_LIFT_METRES` | 0.15 m |
+| Lift while a panel is held | `ChromeLayout.GRAB_LIFT_METRES` | 0.15 m |
 
 Rules, in the order they matter:
 

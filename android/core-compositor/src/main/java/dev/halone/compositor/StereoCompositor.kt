@@ -1,5 +1,11 @@
 package dev.halone.compositor
 
+import dev.halone.compositor.ChromeLayout.CURSOR_STANDOFF_FRACTION
+import dev.halone.compositor.ChromeLayout.FRAME_GAP_PX
+import dev.halone.compositor.ChromeLayout.FRAME_THICKNESS_PX
+import dev.halone.compositor.ChromeLayout.HANDLE_NEAR_ALPHA
+import dev.halone.compositor.ChromeLayout.PREVIEW_THICKNESS_PX
+import dev.halone.compositor.ChromeLayout.RING_PX
 import android.opengl.GLES20
 import android.opengl.GLSurfaceView
 import android.opengl.Matrix
@@ -867,9 +873,7 @@ class StereoCompositor(
      * spans at 4 m. At 15 cm the vergence change is under 0.04 degrees, and
      * being drawn whole rather than sliced is what makes it look picked up.
      */
-    private fun drawDistanceOf(panel: Panel): Float =
-        panel.pose.distanceMetres -
-            if (panel === scene.grabbed) GRAB_LIFT_METRES else 0f
+    private fun drawDistanceOf(panel: Panel): Float = ChromeLayout.drawDistance(scene, panel)
 
     /**
      * The cursor is sized for [SIZE_REFERENCE_METRES] and scaled with
@@ -904,16 +908,8 @@ class StereoCompositor(
         )
         Matrix.multiplyMM(mvp, 0, viewProjection, 0, cursorModel, 0)
 
-        val alpha = (if (focused || grabbed) 1f else UNFOCUSED_CHROME) * opacity
-        val (r, g, b) = when {
-            // Held panels get their own colour rather than a brighter one: while
-            // dragging, the wearer needs to know which panel is coming with them
-            // at a glance, and pinned-or-following is the state they are about
-            // to change anyway.
-            grabbed -> Triple(1f, 1f, 1f)
-            panel.follow.enabled -> Triple(1f, 0.72f, 0.2f)
-            else -> Triple(0.25f, 0.8f, 1f)
-        }
+        val alpha = ChromeLayout.frameAlpha(focused, grabbed, opacity)
+        val (r, g, b) = ChromeLayout.frameColor(grabbed, panel.follow.enabled)
         frame.draw(
             mvp, panel.widthPx.toFloat(), panel.heightPx.toFloat(), marginPx,
             panel.cornerRadiusPx, FRAME_GAP_PX, FRAME_THICKNESS_PX, r, g, b, alpha,
@@ -1004,24 +1000,18 @@ class StereoCompositor(
 
     /** The handle at the corner the pointer is near, brighter when the pointer is on it. */
     private fun drawResizeHandle(panel: Panel, viewProjection: FloatArray) {
-        if (scene.resizing != null || scene.grabbed != null || scene.isAnimatingResize(panel)) return
-        val hit = lastHit
-        val onHandle = hit?.takeIf { it.panel === panel }?.part?.corner
-        val corner = onHandle ?: scene.pointOnPanel(panel, lastAim)
-            ?.let { ResizeHandles.cornerNear(panel.widthPx, panel.heightPx, it.x, it.y) }
-            ?: return
-        if (onHandle == null && hit != null && hit.panel !== panel && hit.part == HitPart.CONTENT) return
+        val handle = ChromeLayout.handle(scene, panel, lastHit, lastAim) ?: return
+        val corner = handle.corner
 
         val pose = panel.pose
         val width = panel.widthPx.toFloat()
         val height = panel.heightPx.toFloat()
         val metresPerPx = pose.widthMetres / width
-        val outside = ResizeHandles.GAP_PX + ResizeHandles.THICKNESS_PX + 2f
-        val inside = panel.cornerRadiusPx + ResizeHandles.EXTEND_PX
-        val toCentre = (inside - outside) / 2f
-        val point = corner.pointPx(width, height)
-        val centreX = point.x - corner.sx * toCentre
-        val centreY = point.y + corner.sy * toCentre
+        val quad = ChromeLayout.handleQuad(width, height, panel.cornerRadiusPx, corner)
+        val outside = quad.outsidePx
+        val inside = quad.insidePx
+        val centreX = quad.centreX
+        val centreY = quad.centreY
         Matrix.setIdentityM(cursorModel, 0)
         Matrix.rotateM(cursorModel, 0, Math.toDegrees(pose.yawRadians.toDouble()).toFloat(), 0f, 1f, 0f)
         Matrix.rotateM(cursorModel, 0, Math.toDegrees(pose.pitchRadians.toDouble()).toFloat(), 1f, 0f, 0f)
@@ -1031,12 +1021,12 @@ class StereoCompositor(
             -(centreY - height / 2f) * metresPerPx,
             -drawDistanceOf(panel),
         )
-        val size = (inside + outside) * metresPerPx
+        val size = quad.sizePx * metresPerPx
         Matrix.scaleM(cursorModel, 0, size * -corner.sx, size * corner.sy, 1f)
         Matrix.multiplyMM(mvp, 0, viewProjection, 0, cursorModel, 0)
         arc.draw(
             mvp, outside, inside, panel.cornerRadiusPx, ResizeHandles.GAP_PX, ResizeHandles.THICKNESS_PX,
-            alpha = if (onHandle != null) 1f else HANDLE_NEAR_ALPHA,
+            alpha = if (handle.onHandle) 1f else HANDLE_NEAR_ALPHA,
         )
     }
 
@@ -1087,7 +1077,7 @@ class StereoCompositor(
         )
         Matrix.scaleM(cursorModel, 0, bar.width * metresPerPx, bar.height * metresPerPx, 1f)
         Matrix.multiplyMM(mvp, 0, viewProjection, 0, cursorModel, 0)
-        bitmapQuad.draw(mvp, texture, (if (active) 1f else INACTIVE_TITLE_BAR) * opacity)
+        bitmapQuad.draw(mvp, texture, ChromeLayout.titleBarAlpha(active, opacity))
     }
 
     /**
@@ -1566,8 +1556,6 @@ class StereoCompositor(
         /** The arrow's picture, which leaves room around the arrow itself, in panel pixels. */
         private const val ARROW_PX = 40f
 
-        /** The ring's picture, in panel pixels. */
-        private const val RING_PX = 26f
 
         /** Where the beam starts, in head space: below and in front of the eyes, out of view. */
         private val BEAM_ORIGIN = floatArrayOf(0.06f, -0.35f, -0.25f, 1f)
@@ -1610,31 +1598,12 @@ class StereoCompositor(
         /** Slow enough that a hitch shows up as an outlier rather than moving the mean. */
         private const val HORIZON_MEAN_ALPHA = 0.02f
 
-        /**
-         * How far a held panel is lifted toward the wearer, in metres. Enough to
-         * clear the depth a panel's own width spans, so a carried panel passes
-         * in front of its neighbours instead of intersecting them.
-         */
-        private const val GRAB_LIFT_METRES = 0.15f
 
-        /** Cursor standoff as a fraction of panel distance, so it scales. */
-        private const val CURSOR_STANDOFF_FRACTION = 0.004f
 
-        /** The border, in the panel's pixels: the simulator's. */
-        private const val FRAME_GAP_PX = 4f
-        private const val FRAME_THICKNESS_PX = 3f
 
-        /** A resize handle the pointer is only near, rather than on. */
-        private const val HANDLE_NEAR_ALPHA = 0.55f
 
-        /** The outline of the size a resize will make. */
-        private const val PREVIEW_THICKNESS_PX = 4f
 
-        /** An unfocused window's title bar, as in the simulator. */
-        private const val INACTIVE_TITLE_BAR = 0.55f
 
-        /** An unfocused panel's border is present but quiet. */
-        private const val UNFOCUSED_CHROME = 0.3f
 
         /** Two frames at 60 Hz; beyond this the scene visibly stops tracking. */
         private const val LONG_FRAME_MS = 33f
