@@ -229,10 +229,8 @@ fun main(args: Array<String>) {
     var headYawRadians = 0f
     var headPitchRadians = 0f
     var mods = 0
-    val halfPitch = Math.toRadians(verticalFov / 2.0)
-    val router = host?.let {
-        InputRouter(it, compositor.scene, kotlin.math.atan(kotlin.math.tan(halfPitch) * 16.0 / 9.0).toFloat(), halfPitch.toFloat())
-    }
+    val router = host?.let { InputRouter(it, compositor.scene) }
+    var routerPlaced = false
     if (router != null) {
         compositor.cursorTexture = StaticTexture(vk, CURSOR_PX, CURSOR_PX, TestPattern.cursor(CURSOR_PX))
         captured = true
@@ -253,7 +251,7 @@ fun main(args: Array<String>) {
     glfwSetCursorPosCallback(window) { _, x, y ->
         if (captured && !lastX.isNaN()) {
             if (router != null) {
-                router.move(x - lastX, y - lastY, headYawRadians, headPitchRadians, mods)
+                router.move(x - lastX, y - lastY, mods)
             } else {
                 yaw -= ((x - lastX) * MOUSE_DEGREES_PER_PIXEL).toFloat()
                 pitch = (pitch - ((y - lastY) * MOUSE_DEGREES_PER_PIXEL).toFloat()).coerceIn(-80f, 80f)
@@ -348,6 +346,10 @@ fun main(args: Array<String>) {
             headYawRadians = Math.toRadians(headYawDegrees.toDouble()).toFloat()
             headPitchRadians = Math.toRadians(headPitchDegrees.toDouble()).toFloat()
             if (router != null) {
+                if (!routerPlaced && compositor.scene.panels.isNotEmpty()) {
+                    router.recentre(headYawRadians, headPitchRadians)
+                    routerPlaced = true
+                }
                 router.refreshHit()
                 compositor.cursor = CursorPose(router.yawRadians, router.pitchRadians, router.hitDistanceMetres ?: optics.virtualImageDistanceMetres)
             }

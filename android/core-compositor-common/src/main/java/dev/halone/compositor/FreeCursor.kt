@@ -33,13 +33,13 @@ class FreeCursor {
         // The step is limited before it is wrapped, so a fast flick past ±180°
         // cannot come out on the far side of the span.
         val span = span(scene)
-        yawRadians = Panel.wrapPi(yawRadians + if (span == null) step else step.coerceIn(span.low, span.high))
+        yawRadians = ScenePanel.wrapPi(yawRadians + if (span == null) step else step.coerceIn(span.low, span.high))
         pitchRadians += Math.toRadians(upDegrees.toDouble()).toFloat()
         clampTo(scene)
     }
 
     fun placeAt(yawRadians: Float, pitchRadians: Float, scene: PanelScene<*>) {
-        this.yawRadians = Panel.wrapPi(yawRadians)
+        this.yawRadians = ScenePanel.wrapPi(yawRadians)
         this.pitchRadians = pitchRadians
         clampTo(scene)
     }
@@ -53,8 +53,8 @@ class FreeCursor {
             pitchRadians = pitchRadians.coerceIn(-MAX_PITCH, MAX_PITCH)
             return
         }
-        if (span.low > 0f) yawRadians = Panel.wrapPi(yawRadians + span.low)
-        if (span.high < 0f) yawRadians = Panel.wrapPi(yawRadians + span.high)
+        if (span.low > 0f) yawRadians = ScenePanel.wrapPi(yawRadians + span.low)
+        if (span.high < 0f) yawRadians = ScenePanel.wrapPi(yawRadians + span.high)
         pitchRadians = pitchRadians.coerceIn(span.bottom, span.top)
     }
 
@@ -70,7 +70,7 @@ class FreeCursor {
         var bottom = Float.MAX_VALUE
         var top = -Float.MAX_VALUE
         for (region in reach) {
-            val offset = Panel.wrapPi(region.yaw - yawRadians)
+            val offset = ScenePanel.wrapPi(region.yaw - yawRadians)
             // A hair inside the edge, where the hit test still lands on it.
             low = minOf(low, offset - region.halfWidth + INSET)
             high = maxOf(high, offset + region.halfWidth - INSET)

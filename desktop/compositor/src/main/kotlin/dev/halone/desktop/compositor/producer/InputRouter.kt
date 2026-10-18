@@ -1,28 +1,27 @@
 package dev.halone.desktop.compositor.producer
 
+import dev.halone.compositor.FreeCursor
 import dev.halone.compositor.PanelScene
 import dev.halone.desktop.compositor.render.DesktopPanel
 import dev.halone.glasses.math.Vec3
 import org.lwjgl.glfw.GLFW.*
-import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 
 /**
- * A pointer the Mac's mouse moves through the scene, and the producer input it
- * turns into: world-locked, kept within reach of the head, hit-tested against
- * the panels, and forwarded to whichever producer panel is under it.
+ * The Mac's mouse and keyboard, as producer input: the mouse drives a
+ * [FreeCursor] (world-locked, kept to what can be clicked, as the touchpad does
+ * on Android), which is hit-tested against the panels and forwarded to
+ * whichever producer panel is under it.
  */
 class InputRouter(
     private val host: ProducerHost,
     private val scene: PanelScene<DesktopPanel>,
-    private val halfFovYawRadians: Float,
-    private val halfFovPitchRadians: Float,
 ) {
-    var yawRadians = 0f
-        private set
-    var pitchRadians = 0f
-        private set
+    private val cursor = FreeCursor()
+
+    val yawRadians: Float get() = cursor.yawRadians
+    val pitchRadians: Float get() = cursor.pitchRadians
 
     /** Where the pointer last met a panel, for drawing the cursor; null when it is over nothing. */
     var hitDistanceMetres: Float? = null
@@ -37,10 +36,9 @@ class InputRouter(
     private var pendingKeyCode: Int? = null
     private val typed = HashMap<Int, Int>()
 
-    val direction: Vec3
-        get() = Vec3(-sin(yawRadians) * cos(pitchRadians), sin(pitchRadians), -cos(yawRadians) * cos(pitchRadians))
+    val direction: Vec3 get() = cursor.direction()
 
-    /** Points straight at pixel ([xPx], [yPx]) of [panel], ignoring the reach limit; for scripted tests. */
+    /** Points straight at pixel ([xPx], [yPx]) of [panel]; for scripted tests. */
     fun pointAt(panel: DesktopPanel, xPx: Float, yPx: Float, modifiers: Int = 0) {
         val pose = panel.pose
         val x = (xPx / panel.widthPx - 0.5f) * pose.widthMetres
@@ -52,29 +50,48 @@ class InputRouter(
         val cy = cos(pose.yawRadians); val sy = sin(pose.yawRadians)
         val x2 = x * cy + z1 * sy
         val z2 = -x * sy + z1 * cy
-        yawRadians = kotlin.math.atan2(-x2, -z2)
-        pitchRadians = kotlin.math.atan2(y1, kotlin.math.sqrt(x2 * x2 + z2 * z2))
+        cursor.placeAt(kotlin.math.atan2(-x2, -z2), kotlin.math.atan2(y1, kotlin.math.sqrt(x2 * x2 + z2 * z2)), scene)
         hover(modifiers)
     }
 
-    fun recentre(headYaw: Float, headPitch: Float) {
-        yawRadians = headYaw
-        pitchRadians = headPitch
-    }
+    /** Puts the cursor where the wearer is looking, as CursorInput.recenter does. */
+    fun recentre(headYaw: Float, headPitch: Float) = cursor.placeAt(headYaw, headPitch, scene)
 
-    /** Moves the pointer by mouse pixels and keeps it within sight of the head. */
-    fun move(dx: Double, dy: Double, headYaw: Float, headPitch: Float, modifiers: Int) {
-        yawRadians -= (dx * RADIANS_PER_PIXEL).toFloat()
-        pitchRadians = (pitchRadians - (dy * RADIANS_PER_PIXEL).toFloat()).coerceIn(-1.3f, 1.3f)
-        var offset = wrap(yawRadians - headYaw)
-        offset = offset.coerceIn(-halfFovYawRadians, halfFovYawRadians)
-        yawRadians = headYaw + offset
-        pitchRadians = pitchRadians.coerceIn(headPitch - halfFovPitchRadians, headPitch + halfFovPitchRadians)
+    /** Degrees of cursor travel per mouse count; Android's `input.mouseSpeed` default. */
+    var degreesPerCount = DEFAULT_MOUSE_SPEED
+
+    private var holdingStill = false
+    private var heldRight = 0f
+    private var heldUp = 0f
+    private var heldTravel = 0f
+
+    /**
+     * Ported from CursorInput.pointerMoved: while a button is down the cursor
+     * stays put until the motion adds up to the click slop, then catches up at
+     * once, so a press that rolls the finger is still a click.
+     */
+    fun move(dx: Double, dy: Double, modifiers: Int) {
+        val right = (dx * degreesPerCount).toFloat()
+        val up = (-dy * degreesPerCount).toFloat()
+        if (holdingStill) {
+            heldRight += right
+            heldUp += up
+            heldTravel += kotlin.math.hypot(dx, dy).toFloat()
+            if (heldTravel < MOUSE_CLICK_SLOP_COUNTS) return
+            holdingStill = false
+            cursor.moveBy(heldRight, heldUp, scene)
+        } else {
+            cursor.moveBy(right, up, scene)
+        }
         hover(modifiers)
     }
 
-    /** Updates where the pointer meets the scene, for drawing it, without telling any producer. */
+    /**
+     * Keeps the cursor inside the panels as they move, and updates where it
+     * meets the scene for drawing; tells no producer. Every frame.
+     */
     fun refreshHit() {
+        cursor.clampTo(scene)
         hitDistanceMetres = scene.hitTest(direction)?.distanceMetres
     }
 
@@ -90,6 +107,10 @@ class InputRouter(
     }
 
     fun button(button: Int, pressed: Boolean, modifiers: Int, now: Double) {
+        holdingStill = pressed && button == 0
+        heldRight = 0f
+        heldUp = 0f
+        heldTravel = 0f
         val hit = scene.hitTest(direction) ?: return
         val index = hit.panel.producerIndex() ?: return
         val mask = 1 shl button
@@ -151,15 +172,9 @@ class InputRouter(
 
     private fun DesktopPanel.producerIndex(): Int? = id.removePrefix("producer-").takeIf { it != id }?.toIntOrNull()
 
-    private fun wrap(angle: Float): Float {
-        var a = angle
-        while (a > PI) a -= (2 * PI).toFloat()
-        while (a < -PI) a += (2 * PI).toFloat()
-        return a
-    }
-
     private companion object {
-        const val RADIANS_PER_PIXEL = 0.0012
+        const val DEFAULT_MOUSE_SPEED = 0.04
+        const val MOUSE_CLICK_SLOP_COUNTS = 6f
         const val WHEEL_PIXELS = 40.0
         const val DOUBLE_CLICK_SECONDS = 0.4
 
