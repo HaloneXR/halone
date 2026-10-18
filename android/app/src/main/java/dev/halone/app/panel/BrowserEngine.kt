@@ -9,6 +9,7 @@ import dev.halone.compositor.PanelEngine
 import dev.halone.compositor.TopLayer
 import dev.halone.compositor.TouchPhase
 import dev.halone.engine.webview.WebViewEngine
+import dev.halone.shell.BrowserBand
 import dev.halone.shell.BrowserControl
 import dev.halone.shell.BrowserPrompt
 import dev.halone.shell.BrowserState
@@ -192,12 +193,7 @@ class BrowserEngine(
      * the tab row comes or goes, it simply reflows.
      */
     private fun updateBand(keepPageStill: Boolean) {
-        val prompting = content.active.prompts.isNotEmpty()
-        val next = when {
-            fullScreen -> 0
-            hiddenByScroll && !prompting -> 0
-            else -> TOOLBAR_PX + (if (content.tabs.size > 1) TABS_PX else 0) + (if (prompting) PROMPT_PX else 0)
-        }
+        val next = BrowserBand.heightPx(content.tabs.size, content.active.prompts.isNotEmpty(), fullScreen, hiddenByScroll)
         val previous = visibleHeightPx
         if (next == previous) return
         visibleHeightPx = next
@@ -321,10 +317,8 @@ class BrowserEngine(
     }
 
     companion object {
-        /** The browser page's rows, in its pixels: the toolbar, the tab row, then a page's permission prompt. */
-        const val TOOLBAR_PX = 76
-        const val TABS_PX = 52
-        const val PROMPT_PX = 64
+        private const val TOOLBAR_PX = BrowserBand.TOOLBAR_PX
+        private const val TABS_PX = BrowserBand.TABS_PX
 
         private const val SCROLL_SLOP_PX = 8
 
