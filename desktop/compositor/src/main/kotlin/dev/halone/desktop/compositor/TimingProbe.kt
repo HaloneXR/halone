@@ -46,7 +46,9 @@ class TimingProbe(private val clock: DisplayClock?) {
     fun report(refreshNs: Long): String {
         val sorted = latencies.sorted()
         fun pct(p: Double) = if (sorted.isEmpty()) Double.NaN else sorted[minOf(sorted.size - 1, (sorted.size * p).toInt())]
-        val phase = if (phases.isEmpty()) "no glasses clock yet" else {
+        val phase = if (phases.isEmpty()) {
+            if (presented == 0) "no present times to compare with the glasses' refresh" else "no glasses clock yet"
+        } else {
             val c = phases.sumOf { cos(it * 2 * Math.PI) } / phases.size
             val s = phases.sumOf { sin(it * 2 * Math.PI) } / phases.size
             val mean = ((atan2(s, c) / (2 * Math.PI)) + 1) % 1
