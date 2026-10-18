@@ -38,11 +38,20 @@ class ProducerHost(
     private var producerPort = 0
     private val textures = HashMap<Int, ProducerTexture>()
     private val pending = HashMap<Int, Event>()
+    private val resizes = HashMap<Int, Event>()
+    private val pendingResized = HashMap<Int, Event>()
     private val held = ArrayDeque<Pair<Long, Long>>()
+    private val retired = ArrayDeque<Pair<ProducerTexture, Long>>()
     private val newFrames = HashMap<Int, Int>()
 
     /** Called on the render thread when a panel's surfaces arrive. */
     var onPanelReady: ((index: Int, texture: ProducerTexture) -> Unit)? = null
+
+    /** Called on the render thread when a resized panel's page is ready at its new size. */
+    var onPanelResized: ((index: Int, texture: ProducerTexture) -> Unit)? = null
+
+    /** Called on the render thread just before a replaced texture is closed. */
+    var onTextureClosed: ((ProducerTexture) -> Unit)? = null
 
     private data class Event(
         val kind: Int, val panel: Int, val index: Int, val count: Int, val width: Int, val height: Int,
@@ -76,21 +85,42 @@ class ProducerHost(
         }
     }
 
-    /** Adopts what arrived since the last frame; [frame] counts frames, for releasing surfaces the GPU is done with. */
-    fun update(frame: Long) {
+    /**
+     * Adopts what arrived since the last frame; [frame] counts frames, for
+     * releasing surfaces the GPU is done with. A [frozen] panel keeps showing
+     * the picture it has, as a window easing into a new size does on Android;
+     * its page at the new size is taken up once it thaws and has painted.
+     */
+    fun update(frame: Long, frozen: (Int) -> Boolean = { false }) {
         while (true) {
             val e = events.poll() ?: break
             when (e.kind) {
                 BridgeEvent.HELLO -> {
                     if (producerPort == 0) producerPort = e.reply else bridge.halone_release_port(e.reply)
-                    val texture = ProducerTexture(vk, e.width, e.height, e.surfaces)
-                    textures.put(e.panel, texture)?.close()
-                    onPanelReady?.invoke(e.panel, texture)
+                    if (e.panel in textures) {
+                        resizes.put(e.panel, e)?.surfaces?.forEach(bridge::halone_surface_release)
+                        pendingResized.remove(e.panel)
+                    } else {
+                        val texture = ProducerTexture(vk, e.width, e.height, e.surfaces)
+                        textures[e.panel] = texture
+                        onPanelReady?.invoke(e.panel, texture)
+                    }
                 }
-                BridgeEvent.FRAME -> if ((pending[e.panel]?.seq ?: -1) < e.seq) pending[e.panel] = e
+                BridgeEvent.FRAME -> {
+                    val into = if (e.panel in resizes) pendingResized else pending
+                    if ((into[e.panel]?.seq ?: -1) < e.seq) into[e.panel] = e
+                }
             }
         }
-        for ((panel, e) in pending) {
+        for (panel in resizes.keys.filter { it in pendingResized && !frozen(it) }) {
+            val e = resizes.remove(panel)!!
+            val texture = ProducerTexture(vk, e.width, e.height, e.surfaces)
+            textures.put(panel, texture)?.let { retired.addLast(it to frame) }
+            pending[panel] = pendingResized.remove(panel)!!
+            onPanelResized?.invoke(panel, texture)
+        }
+        for (panel in pending.keys.filter { !frozen(it) }) {
+            val e = pending.remove(panel)!!
             val texture = textures[panel] ?: continue
             if (e.index !in texture.surfaces.indices || e.index == texture.current) continue
             bridge.halone_surface_use(texture.surfaces[e.index], 1)
@@ -98,10 +128,23 @@ class ProducerHost(
             texture.current = e.index
             newFrames[panel] = (newFrames[panel] ?: 0) + 1
         }
-        pending.clear()
         while (held.isNotEmpty() && frame - held.first().second > HOLD_FRAMES) {
             bridge.halone_surface_use(held.removeFirst().first, -1)
         }
+        while (retired.isNotEmpty() && frame - retired.first().second > HOLD_FRAMES) {
+            close(retired.removeFirst().first)
+        }
+    }
+
+    /** Asks the producer to lay [panel]'s page out at a new size; [onPanelResized] follows. */
+    fun resize(panel: Int, widthPx: Int, heightPx: Int) {
+        if (producerPort != 0) bridge.halone_send_resize(producerPort, panel, widthPx, heightPx)
+    }
+
+    private fun close(texture: ProducerTexture) {
+        onTextureClosed?.invoke(texture)
+        if (texture.current >= 0) bridge.halone_surface_use(texture.surfaces[texture.current], -1)
+        texture.close()
     }
 
     /** Asks the producer to begin its next frame so it is ready by [targetNs] (System.nanoTime). */
@@ -126,11 +169,13 @@ class ProducerHost(
         receiver.join(1000)
         held.forEach { bridge.halone_surface_use(it.first, -1) }
         held.clear()
-        textures.values.forEach { texture ->
-            if (texture.current >= 0) bridge.halone_surface_use(texture.surfaces[texture.current], -1)
-            texture.close()
-        }
+        onTextureClosed = null
+        retired.forEach { close(it.first) }
+        retired.clear()
+        textures.values.forEach(::close)
         textures.clear()
+        resizes.values.forEach { it.surfaces.forEach(bridge::halone_surface_release) }
+        resizes.clear()
         bridge.halone_release_port(producerPort)
     }
 

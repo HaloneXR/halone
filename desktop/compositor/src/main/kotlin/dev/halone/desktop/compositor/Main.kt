@@ -79,6 +79,8 @@ private class Options(args: Array<String>) {
     private fun value(args: Array<String>, name: String) = args.indexOf(name).takeIf { it >= 0 }?.let { args.getOrNull(it + 1) }
 }
 
+private fun producerIndex(panel: DesktopPanel) = panel.id.removePrefix("producer-").takeIf { it != panel.id }?.toIntOrNull()
+
 /**
  * Drives the pointer through spike 2's test page (`site/spike/test.html`, 1280x720) the way the mouse
  * and keyboard would: point at the button and click it, focus the field and type, scroll the list.
@@ -222,10 +224,27 @@ fun main(args: Array<String>) {
         compositor.forget(panel.texture)
         panel.texture.close()
     }
+    val host = options.producer?.let { executable ->
+        ProducerHost(vk, executable, options.producerPanels, options.producerMarginMs, File(options.producerLog)).also { host ->
+            host.onPanelReady = { index, texture ->
+                val spec = options.producerPanels[index]
+                val panel = DesktopPanel("producer-$index", spec.width, spec.height, texture, PanelPose(distanceMetres = optics.virtualImageDistanceMetres))
+                panel.fitToFov(verticalFov, PANEL_VERTICAL_FILL)
+                panel.title = java.net.URI(spec.url).let { (it.host ?: "") + (it.path ?: "") }
+                panel.tag = "web"
+                compositor.scene.open(panel)
+                println("producer panel $index ready: ${spec.width}x${spec.height} ${spec.url}")
+            }
+            host.onPanelResized = { index, texture -> compositor.scene.find("producer-$index")?.texture = texture }
+            host.onTextureClosed = compositor::forget
+        }
+    }
+    if (host == null) repeat(3) { openPanel() }
     val chromeActions = object : ChromePress.Actions<DesktopPanel> {
         override fun resizeContent(panel: DesktopPanel, widthPx: Int, heightPx: Int) {
             panel.widthPx = widthPx
             panel.heightPx = heightPx
+            producerIndex(panel)?.let { host?.resize(it, widthPx, heightPx) }
         }
 
         override fun back(panel: DesktopPanel) = Unit
@@ -239,20 +258,6 @@ fun main(args: Array<String>) {
         override fun resized(panel: DesktopPanel, oldWidthPx: Int, oldHeightPx: Int) =
             println("resized '${panel.id}' ${oldWidthPx}x$oldHeightPx -> ${panel.widthPx}x${panel.heightPx}")
     }
-    val host = options.producer?.let { executable ->
-        ProducerHost(vk, executable, options.producerPanels, options.producerMarginMs, File(options.producerLog)).also { host ->
-            host.onPanelReady = { index, texture ->
-                val spec = options.producerPanels[index]
-                val panel = DesktopPanel("producer-$index", spec.width, spec.height, texture, PanelPose(distanceMetres = optics.virtualImageDistanceMetres))
-                panel.fitToFov(verticalFov, PANEL_VERTICAL_FILL)
-                panel.title = java.net.URI(spec.url).let { (it.host ?: "") + (it.path ?: "") }
-                panel.tag = "web"
-                compositor.scene.open(panel)
-                println("producer panel $index ready: ${spec.width}x${spec.height} ${spec.url}")
-            }
-        }
-    }
-    if (host == null) repeat(3) { openPanel() }
 
     val aim = session?.displayClock?.let { FrameAim(it, session.tracker) }
 
@@ -393,7 +398,7 @@ fun main(args: Array<String>) {
             worstMs = maxOf(worstMs, dt * 1000.0)
             lastSampleNs = sampleNs
             val id = loop.lastPresentId + 1
-            host?.update(id)
+            host?.update(id) { index -> compositor.scene.find("producer-$index")?.let(compositor.scene::isAnimatingResize) == true }
             sampleById[id] = sampleNs
             probe.sampled(id, sampleNs)
             val aiming = aim?.takeIf { condition.aimed && it.ready }

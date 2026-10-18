@@ -120,6 +120,19 @@ int32_t halone_send_input(uint32_t producer, uint32_t panel, uint32_t kind, floa
     return mach_msg(&in.header, MACH_SEND_MSG | MACH_SEND_TIMEOUT, sizeof in, 0, MACH_PORT_NULL, 0, MACH_PORT_NULL);
 }
 
+int32_t halone_send_resize(uint32_t producer, uint32_t panel, uint32_t width, uint32_t height) {
+    spike_resize r;
+    memset(&r, 0, sizeof r);
+    r.header.msgh_bits = MACH_MSGH_BITS_SET(MACH_MSG_TYPE_COPY_SEND, 0, 0, 0);
+    r.header.msgh_size = sizeof r;
+    r.header.msgh_remote_port = producer;
+    r.header.msgh_id = SPIKE_MSG_RESIZE;
+    r.panel = panel;
+    r.width = width;
+    r.height = height;
+    return mach_msg(&r.header, MACH_SEND_MSG | MACH_SEND_TIMEOUT, sizeof r, 0, MACH_PORT_NULL, 0, MACH_PORT_NULL);
+}
+
 void halone_surface_use(uint64_t surface, int32_t delta) {
     IOSurfaceRef s = (IOSurfaceRef)(uintptr_t)surface;
     if (!s) return;

@@ -72,6 +72,7 @@ struct Panel {
     CefRefPtr<CefBrowser> browser;
     uint32_t paints = 0;
     uint32_t busy = 0;
+    bool resizing = false;
     Window beginToPaint;
     Window blit;
 };
@@ -141,6 +142,11 @@ void deliver(Panel *p, const CefAcceleratedPaintInfo &info) {
         warned = true;
         return;
     }
+    const cef_rect_t &visible = info.extra.visible_rect;
+    if (p->resizing) {
+        if (visible.width != p->width || visible.height != p->height) return;
+        p->resizing = false;
+    }
     uint32_t index = UINT32_MAX;
     for (uint32_t k = 0; k < gSurfaceCount; k++) {
         uint32_t i = (p->next + k) % gSurfaceCount;
@@ -161,7 +167,6 @@ void deliver(Panel *p, const CefAcceleratedPaintInfo &info) {
     td.usage = MTLTextureUsageShaderRead;
     td.storageMode = MTLStorageModeShared;
     id<MTLTexture> sourceTexture = [gDevice newTextureWithDescriptor:td iosurface:source plane:0];
-    const cef_rect_t &visible = info.extra.visible_rect;
     NSUInteger w = (NSUInteger)std::min(visible.width, p->width);
     NSUInteger h = (NSUInteger)std::min(visible.height, p->height);
     id<MTLCommandBuffer> cb = [gQueue commandBuffer];
@@ -326,6 +331,25 @@ void handleInput(const spike_input &in) {
     }
 }
 
+void handleResize(const spike_resize &r) {
+    if (r.panel >= gPanels.size() || r.width == 0 || r.height == 0) return;
+    Panel *p = gPanels[r.panel];
+    if ((int)r.width == p->width && (int)r.height == p->height) return;
+    for (uint32_t i = 0; i < gSurfaceCount; i++) {
+        p->textures[i] = nil;
+        if (p->surfaces[i]) CFRelease(p->surfaces[i]);
+        p->surfaces[i] = nullptr;
+    }
+    p->width = (int)r.width;
+    p->height = (int)r.height;
+    p->next = 0;
+    p->lastSent = UINT32_MAX;
+    p->resizing = true;
+    allocateSurfaces(p);
+    sendHello(p);
+    if (p->browser) p->browser->GetHost()->WasResized();
+}
+
 void beginFrame() {
     uint64_t now = mach_absolute_time();
     for (Panel *p : gPanels) {
@@ -359,6 +383,8 @@ void drainInbox() {
             ticked = true;
         } else if (in.header.msgh_id == SPIKE_MSG_INPUT) {
             handleInput(in.input.msg);
+        } else if (in.header.msgh_id == SPIKE_MSG_RESIZE) {
+            handleResize(in.resize.msg);
         }
     }
     if (ticked) handleTick(latestTick);

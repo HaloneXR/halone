@@ -10,6 +10,7 @@ enum {
     SPIKE_MSG_FRAME = 2,
     SPIKE_MSG_TICK = 3,
     SPIKE_MSG_INPUT = 4,
+    SPIKE_MSG_RESIZE = 5,
 };
 
 typedef struct {
@@ -64,6 +65,14 @@ typedef struct {
     uint16_t unmodified;
 } spike_input;
 
+/* The panel's page is to be laid out at a new size; a HELLO with surfaces of that size answers it. */
+typedef struct {
+    mach_msg_header_t header;
+    uint32_t panel;
+    uint32_t width;
+    uint32_t height;
+} spike_resize;
+
 typedef union {
     mach_msg_header_t header;
     struct {
@@ -86,4 +95,8 @@ typedef union {
         spike_input msg;
         mach_msg_trailer_t trailer;
     } input;
+    struct {
+        spike_resize msg;
+        mach_msg_trailer_t trailer;
+    } resize;
 } spike_producer_inbox;

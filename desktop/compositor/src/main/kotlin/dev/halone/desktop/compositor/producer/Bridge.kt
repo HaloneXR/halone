@@ -42,6 +42,7 @@ interface Bridge : Library {
         producer: Int, panel: Int, kind: Int, x: Float, y: Float, dx: Float, dy: Float,
         button: Int, clicks: Int, modifiers: Int, keyCode: Int, character: Int, unmodified: Int,
     ): Int
+    fun halone_send_resize(producer: Int, panel: Int, width: Int, height: Int): Int
     fun halone_surface_use(surface: Long, delta: Int)
     fun halone_surface_release(surface: Long)
     fun halone_release_port(port: Int)
