@@ -4,8 +4,6 @@
 #include <mach/mach_time.h>
 #include <servers/bootstrap.h>
 
-#include <algorithm>
-#include <sstream>
 #include <string>
 #include <vector>
 
@@ -15,7 +13,7 @@
 #include "include/cef_client.h"
 #include "include/cef_command_line.h"
 #include "include/wrapper/cef_library_loader.h"
-#include "protocol.h"
+#include "producer_common.h"
 
 @interface SpikeApplication : NSApplication <CefAppProtocol> {
     BOOL _handlingSendEvent;
@@ -48,16 +46,6 @@ dispatch_source_t gBeginTimer;
 
 double millis(uint64_t ticks) { return (double)ticks * gTimebase.numer / gTimebase.denom / 1e6; }
 
-struct Window {
-    std::vector<double> values;
-    void add(double v) { values.push_back(v); }
-    double percentile(double p) {
-        if (values.empty()) return 0;
-        std::sort(values.begin(), values.end());
-        return values[std::min(values.size() - 1, (size_t)(values.size() * p))];
-    }
-};
-
 struct Panel {
     uint32_t number = 0;
     int width = 0;
@@ -73,8 +61,8 @@ struct Panel {
     uint32_t paints = 0;
     uint32_t busy = 0;
     bool resizing = false;
-    Window beginToPaint;
-    Window blit;
+    producer::Window beginToPaint;
+    producer::Window blit;
 };
 
 std::vector<Panel *> gPanels;
@@ -202,60 +190,6 @@ void deliver(Panel *p, const CefAcceleratedPaintInfo &info) {
     sendOrQuit(&f.header, sizeof f);
 }
 
-const char *cssCursor(cef_cursor_type_t type) {
-    switch (type) {
-        case CT_CROSS: return "crosshair";
-        case CT_HAND: return "pointer";
-        case CT_IBEAM: return "text";
-        case CT_WAIT: return "wait";
-        case CT_HELP: return "help";
-        case CT_EASTRESIZE:
-        case CT_WESTRESIZE:
-        case CT_EASTWESTRESIZE:
-        case CT_COLUMNRESIZE:
-        case CT_MIDDLE_PANNING_HORIZONTAL: return "ew-resize";
-        case CT_NORTHRESIZE:
-        case CT_SOUTHRESIZE:
-        case CT_NORTHSOUTHRESIZE:
-        case CT_ROWRESIZE:
-        case CT_MIDDLE_PANNING_VERTICAL: return "ns-resize";
-        case CT_NORTHEASTRESIZE:
-        case CT_SOUTHWESTRESIZE:
-        case CT_NORTHEASTSOUTHWESTRESIZE: return "nesw-resize";
-        case CT_NORTHWESTRESIZE:
-        case CT_SOUTHEASTRESIZE:
-        case CT_NORTHWESTSOUTHEASTRESIZE: return "nwse-resize";
-        case CT_MIDDLEPANNING:
-        case CT_EASTPANNING:
-        case CT_NORTHPANNING:
-        case CT_NORTHEASTPANNING:
-        case CT_NORTHWESTPANNING:
-        case CT_SOUTHPANNING:
-        case CT_SOUTHEASTPANNING:
-        case CT_SOUTHWESTPANNING:
-        case CT_WESTPANNING:
-        case CT_MOVE: return "all-scroll";
-        case CT_VERTICALTEXT: return "vertical-text";
-        case CT_CELL: return "cell";
-        case CT_CONTEXTMENU: return "context-menu";
-        case CT_ALIAS:
-        case CT_DND_LINK: return "alias";
-        case CT_PROGRESS: return "progress";
-        case CT_NODROP:
-        case CT_DND_NONE: return "not-allowed";
-        case CT_COPY:
-        case CT_DND_COPY: return "copy";
-        case CT_NONE: return "none";
-        case CT_NOTALLOWED: return "not-allowed";
-        case CT_ZOOMIN: return "zoom-in";
-        case CT_ZOOMOUT: return "zoom-out";
-        case CT_GRAB: return "grab";
-        case CT_GRABBING:
-        case CT_DND_MOVE: return "grabbing";
-        default: return "default";
-    }
-}
-
 void sendCursor(Panel *p, const char *name) {
     spike_cursor c = {};
     c.header.msgh_bits = MACH_MSGH_BITS_SET(MACH_MSG_TYPE_COPY_SEND, 0, 0, 0);
@@ -291,7 +225,7 @@ public:
     void OnAfterCreated(CefRefPtr<CefBrowser> browser) override { panel_->browser = browser; }
 
     bool OnCursorChange(CefRefPtr<CefBrowser>, CefCursorHandle, cef_cursor_type_t type, const CefCursorInfo &) override {
-        const char *name = cssCursor(type);
+        const char *name = producer::cssCursor(type);
         if (name != cursor_) {
             cursor_ = name;
             sendCursor(panel_, name);
@@ -339,19 +273,6 @@ private:
     IMPLEMENT_REFCOUNTING(SpikeApp);
 };
 
-uint32_t cefModifiers(uint32_t flags, uint32_t buttons) {
-    uint32_t m = 0;
-    if (flags & NSEventModifierFlagShift) m |= EVENTFLAG_SHIFT_DOWN;
-    if (flags & NSEventModifierFlagControl) m |= EVENTFLAG_CONTROL_DOWN;
-    if (flags & NSEventModifierFlagOption) m |= EVENTFLAG_ALT_DOWN;
-    if (flags & NSEventModifierFlagCommand) m |= EVENTFLAG_COMMAND_DOWN;
-    if (flags & NSEventModifierFlagCapsLock) m |= EVENTFLAG_CAPS_LOCK_ON;
-    if (buttons & 1) m |= EVENTFLAG_LEFT_MOUSE_BUTTON;
-    if (buttons & 2) m |= EVENTFLAG_RIGHT_MOUSE_BUTTON;
-    if (buttons & 4) m |= EVENTFLAG_MIDDLE_MOUSE_BUTTON;
-    return m;
-}
-
 void focus(Panel *target) {
     for (Panel *p : gPanels)
         if (p->browser) p->browser->GetHost()->SetFocus(p == target);
@@ -361,51 +282,13 @@ void handleInput(const spike_input &in) {
     if (in.panel >= gPanels.size()) return;
     Panel *p = gPanels[in.panel];
     if (!p->browser) return;
-    CefRefPtr<CefBrowserHost> host = p->browser->GetHost();
-    CefMouseEvent mouse;
-    mouse.x = (int)in.x;
-    mouse.y = (int)in.y;
-    switch (in.kind) {
-        case SPIKE_INPUT_MOVE:
-            mouse.modifiers = cefModifiers(in.modifiers, in.button);
-            host->SendMouseMoveEvent(mouse, false);
-            break;
-        case SPIKE_INPUT_LEAVE:
-            host->SendMouseMoveEvent(mouse, true);
-            break;
-        case SPIKE_INPUT_DOWN:
-        case SPIKE_INPUT_UP: {
-            if (in.kind == SPIKE_INPUT_DOWN) focus(p);
-            cef_mouse_button_type_t button = in.button == 1 ? MBT_RIGHT : in.button == 2 ? MBT_MIDDLE : MBT_LEFT;
-            mouse.modifiers = cefModifiers(in.modifiers, in.kind == SPIKE_INPUT_DOWN ? 1u << in.button : 0);
-            host->SendMouseClickEvent(mouse, button, in.kind == SPIKE_INPUT_UP, (int)in.clicks);
-            break;
-        }
-        case SPIKE_INPUT_WHEEL:
-            mouse.modifiers = cefModifiers(in.modifiers, 0);
-            host->SendMouseWheelEvent(mouse, (int)in.dx, (int)in.dy);
-            break;
-        case SPIKE_INPUT_KEY_DOWN:
-        case SPIKE_INPUT_KEY_UP: {
-            CefKeyEvent key;
-            key.native_key_code = (int)in.keyCode;
-            key.character = in.character;
-            key.unmodified_character = in.unmodified;
-            key.modifiers = cefModifiers(in.modifiers, 0);
-            if (in.kind == SPIKE_INPUT_KEY_UP) {
-                key.type = KEYEVENT_KEYUP;
-                host->SendKeyEvent(key);
-                break;
-            }
-            key.type = KEYEVENT_RAWKEYDOWN;
-            host->SendKeyEvent(key);
-            if (in.character && (in.character < 0xF700 || in.character > 0xF8FF)) {
-                key.type = KEYEVENT_CHAR;
-                host->SendKeyEvent(key);
-            }
-            break;
-        }
-    }
+    if (in.kind == SPIKE_INPUT_DOWN) focus(p);
+    producer::dispatchInput(p->browser->GetHost(), in, [](const spike_input &key, CefKeyEvent &event) {
+        event.native_key_code = (int)key.keyCode;
+        event.character = key.character;
+        event.unmodified_character = key.unmodified;
+        return key.character && (key.character < 0xF700 || key.character > 0xF8FF);
+    });
 }
 
 void handleResize(const spike_resize &r) {
@@ -479,20 +362,17 @@ void report() {
 }
 
 bool parsePanels(const std::string &spec) {
-    std::stringstream list(spec);
-    std::string item;
-    while (std::getline(list, item, ',')) {
-        size_t x = item.find('x');
-        size_t at = item.find('@');
-        if (x == std::string::npos || at == std::string::npos || x > at) return false;
+    std::vector<producer::PanelSpec> specs;
+    if (!producer::parsePanels(spec, specs)) return false;
+    for (const producer::PanelSpec &s : specs) {
         Panel *p = new Panel;
-        p->number = (uint32_t)gPanels.size();
-        p->width = std::stoi(item.substr(0, x));
-        p->height = std::stoi(item.substr(x + 1, at - x - 1));
-        p->url = item.substr(at + 1);
+        p->number = s.number;
+        p->width = s.width;
+        p->height = s.height;
+        p->url = s.url;
         gPanels.push_back(p);
     }
-    return !gPanels.empty();
+    return true;
 }
 
 }
