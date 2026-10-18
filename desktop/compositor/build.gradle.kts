@@ -36,7 +36,8 @@ val nativeBridge = tasks.register<Exec>("nativeBridge") {
         "clang", "-dynamiclib", "-O2", "-Wall", "-arch", "arm64",
         "-fobjc-arc", "-o", output.get().asFile.path, source.file("bridge.c").asFile.path, source.file("system_mac.m").asFile.path,
         "-framework", "IOSurface", "-framework", "CoreFoundation", "-framework", "Foundation", "-framework", "IOKit",
-        "-framework", "CoreGraphics", "-framework", "ImageIO", "-framework", "QuickLookThumbnailing", "-framework", "UniformTypeIdentifiers",
+        "-framework", "CoreGraphics", "-framework", "ImageIO", "-framework", "QuickLookThumbnailing",
+        "-framework", "CoreWLAN", "-framework", "SystemConfiguration", "-framework", "UniformTypeIdentifiers",
     )
     doFirst { output.get().asFile.parentFile.mkdirs() }
 }

@@ -19,6 +19,7 @@ import dev.halone.shell.BridgeHost
 import dev.halone.shell.DevCommands
 import dev.halone.shell.InstalledApp
 import dev.halone.shell.PackageApps
+import dev.halone.shell.ProvidedStatusItem
 import dev.halone.shell.FileServer
 import dev.halone.shell.KeyChord
 import dev.halone.shell.SharedFiles
@@ -82,6 +83,8 @@ class DesktopShell(
     private val fileServer = FileServer(files, thumbnailer = DesktopThumbnails(DesktopSystem.thumbnailer)::of, log = log)
         .also { files.urlBase = it.base }
     private var lastBatteryNs = 0L
+    private var lastNetworkNs = 0L
+    private var network: NetworkState? = null
     private val tcp = Sockets(onMain = ::post)
 
     val bridge = BridgeHost(
@@ -146,6 +149,10 @@ class DesktopShell(
     /** Runs what other threads posted, and polls the shell a few times a second, as ShellSession does. */
     fun tick(nowNs: Long) {
         while (true) (queue.poll() ?: break).run()
+        if (lastNetworkNs == 0L || nowNs - lastNetworkNs >= NETWORK_NS) {
+            lastNetworkNs = nowNs
+            background.execute { DesktopSystem.network()?.let { state -> post { showNetwork(state) } } }
+        }
         if (lastBatteryNs == 0L || nowNs - lastBatteryNs >= BATTERY_NS) {
             lastBatteryNs = nowNs
             background.execute { DesktopSystem.battery()?.let { battery -> post { shell.setBattery(battery) } } }
@@ -156,6 +163,21 @@ class DesktopShell(
             bridge.checkFileAccess()
         }
         if (compositor.notice != null && nowNs >= noticeUntilNs) compositor.notice = null
+    }
+
+    /**
+     * The network meter, which the Android integration plugin shows on the
+     * phone. Here it only informs: there are no network settings to open.
+     */
+    private fun showNetwork(state: NetworkState) {
+        if (state == network) return
+        network = state
+        val label = when (state.kind) {
+            NetworkState.Kind.WIFI -> "Wi-Fi, signal ${state.bars} of 4"
+            NetworkState.Kind.WIRED -> "Ethernet"
+            NetworkState.Kind.OFFLINE -> "Offline"
+        }
+        shell.statusItems.set(STATUS_PROVIDER, ProvidedStatusItem(NETWORK_ITEM, NetworkIcons.png(state), label, "", tinted = true))
     }
 
     private fun post(task: Runnable) {
@@ -301,6 +323,9 @@ class DesktopShell(
         const val EYE_HEIGHT_PX = 1080
         const val POLL_NS = 200_000_000L
         const val BATTERY_NS = 30_000_000_000L
+        const val NETWORK_NS = 5_000_000_000L
+        const val STATUS_PROVIDER = "dev.halone.desktop"
+        const val NETWORK_ITEM = "network"
         const val NOTICE_NS = 2_500_000_000L
     }
 }

@@ -10,7 +10,12 @@ import com.sun.jna.ptr.PointerByReference
 import dev.halone.shell.Battery
 import java.io.File
 
-/** What the OS knows that the shell shows: the battery, and the thumbnails its file browser makes. */
+/** How the machine is online; [bars] of 4 for Wi-Fi. */
+data class NetworkState(val kind: Kind, val bars: Int = 0) {
+    enum class Kind { OFFLINE, WIFI, WIRED }
+}
+
+/** What the OS knows that the shell shows: the battery, the network, and the thumbnails its file browser makes. */
 object DesktopSystem {
     private val os = System.getProperty("os.name").lowercase()
 
@@ -20,6 +25,15 @@ object DesktopSystem {
             os.contains("mac") -> Mac.battery()
             os.contains("win") -> Windows.battery()
             else -> linuxBattery()
+        }
+    }.getOrNull()
+
+    /** How the machine is online, or null where that is not known here. */
+    fun network(): NetworkState? = runCatching {
+        when {
+            os.contains("mac") -> Mac.network()
+            os.contains("win") -> null
+            else -> linuxNetwork()
         }
     }.getOrNull()
 
@@ -35,6 +49,25 @@ object DesktopSystem {
         return Battery((capacity / 100.0).coerceIn(0.0, 1.0), status == "Charging" || status == "Full")
     }
 
+    /**
+     * Wi-Fi from `/proc/net/wireless`, whose link quality is out of 70 as
+     * the kernel's drivers report it; otherwise any interface but loopback
+     * with a carrier is a wired one.
+     */
+    private fun linuxNetwork(): NetworkState {
+        val up = File("/sys/class/net").listFiles().orEmpty().filter { it.name != "lo" && File(it, "carrier").readTextOrNull() == "1" }
+        val wireless = File("/proc/net/wireless").readTextOrNull()?.lines().orEmpty().drop(2).mapNotNull { line ->
+            val fields = line.trim().split(Regex("\\s+"))
+            val name = fields.getOrNull(0)?.removeSuffix(":") ?: return@mapNotNull null
+            val quality = fields.getOrNull(2)?.removeSuffix(".")?.toDoubleOrNull() ?: return@mapNotNull null
+            name to quality
+        }.toMap()
+        val wifi = up.firstOrNull { it.name in wireless }
+        if (wifi != null) return NetworkState(NetworkState.Kind.WIFI, ((wireless.getValue(wifi.name) / 70.0) * 4).toInt().coerceIn(0, 4))
+        val wired = up.any { !File(it, "wireless").exists() && File(it, "type").readTextOrNull() == "1" && File(it, "device").exists() }
+        return NetworkState(if (wired) NetworkState.Kind.WIRED else NetworkState.Kind.OFFLINE)
+    }
+
     private fun File.readTextOrNull() = runCatching { readText().trim() }.getOrNull()
 
     @Suppress("FunctionName")
@@ -42,6 +75,7 @@ object DesktopSystem {
         fun halone_battery(level: DoubleByReference, charging: IntByReference): Int
         fun halone_thumbnail(path: String, sizePx: Int, quality: Double, out: PointerByReference, length: IntByReference): Int
         fun halone_free(pointer: Pointer)
+        fun halone_network(kind: IntByReference, bars: IntByReference)
     }
 
     private object Mac {
@@ -52,6 +86,17 @@ object DesktopSystem {
             val charging = IntByReference()
             if (native.halone_battery(level, charging) != 0) return null
             return Battery(level.value.coerceIn(0.0, 1.0), charging.value != 0)
+        }
+
+        fun network(): NetworkState {
+            val kind = IntByReference()
+            val bars = IntByReference()
+            native.halone_network(kind, bars)
+            return when (kind.value) {
+                1 -> NetworkState(NetworkState.Kind.WIFI, bars.value)
+                2 -> NetworkState(NetworkState.Kind.WIRED)
+                else -> NetworkState(NetworkState.Kind.OFFLINE)
+            }
         }
 
         fun thumbnail(file: File, sizePx: Int, quality: Float): ByteArray? {
