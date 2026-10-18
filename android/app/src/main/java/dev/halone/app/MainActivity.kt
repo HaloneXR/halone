@@ -46,7 +46,8 @@ import dev.halone.shell.KeyChord
 import dev.halone.shell.RecordingState
 import dev.halone.shell.ShellListener
 import dev.halone.shell.ShellSettings
-import dev.halone.shell.Shortcuts
+import dev.halone.shell.ShortcutKeys
+import dev.halone.shell.runShortcut
 import dev.halone.app.display.StereoTestPresentation
 import dev.halone.app.panel.GeckoKeyboard
 import dev.halone.app.pointer.CursorImages
@@ -2040,11 +2041,10 @@ class MainActivity : AppCompatActivity() {
         return device != null && device.isExternal && !device.isVirtual && device.keyboardType == InputDevice.KEYBOARD_TYPE_ALPHABETIC
     }
 
-    /** Meta went down and nothing else has been pressed since: on its release, the launcher. */
-    private var metaAlone = false
-
-    /** Keys whose press ran a shortcut, so their release is taken too. */
-    private val shortcutKeys = HashSet<Int>()
+    private val shortcutKeys = ShortcutKeys { chord ->
+        val session = shellSession ?: return@ShortcutKeys false
+        session.shell.runShortcut(chord, session.shortcuts, stereoSession?.scene?.keyTarget, KeyCaptureService.running, ::logLine)
+    }
 
     /**
      * The keyboard shortcuts, from key capture ([captured]) or the app's own
@@ -2052,33 +2052,9 @@ class MainActivity : AppCompatActivity() {
      * itself, so every other shortcut is decided once, here, from the app's.
      */
     private fun onShortcutKey(event: KeyEvent, captured: Boolean): Boolean {
-        val shell = shellSession?.shell ?: return false
-        val captureOn = KeyCaptureService.running
-        if (event.keyCode == KeyEvent.KEYCODE_META_LEFT || event.keyCode == KeyEvent.KEYCODE_META_RIGHT) {
-            if (event.action == KeyEvent.ACTION_DOWN) {
-                if (event.repeatCount == 0) metaAlone = true
-            } else if (metaAlone) {
-                metaAlone = false
-                runShortcut(shell, KeyChord("Meta"), captureOn)
-            }
-            return captured
-        }
-        if (event.action == KeyEvent.ACTION_DOWN) metaAlone = false
-        if (event.action == KeyEvent.ACTION_UP) return shortcutKeys.remove(event.keyCode)
-        val chord = chordOf(event) ?: return false
-        if (captured && !Shortcuts.reservedBySystem(chord)) return false
-        if (event.repeatCount > 0) return event.keyCode in shortcutKeys
-        val handled = runShortcut(shell, chord, captureOn)
-        if (handled || (captured && Shortcuts.reservedBySystem(chord))) shortcutKeys += event.keyCode
-        return event.keyCode in shortcutKeys
-    }
-
-    private fun runShortcut(shell: dev.halone.shell.Shell<*>, chord: KeyChord, captureOn: Boolean): Boolean {
-        val target = stereoSession?.scene?.keyTarget?.let { panel -> shell.windows().firstOrNull { it.panel === panel } }
-        val action = shellSession?.shortcuts?.resolve(chord, inBrowser = target?.kind == dev.halone.shell.WindowKind.WEB, captureOn = captureOn)
-            ?: return false
-        logLine("  shortcut $chord -> $action")
-        return shell.runShortcut(action, target?.id)
+        if (shellSession == null) return false
+        val meta = event.keyCode == KeyEvent.KEYCODE_META_LEFT || event.keyCode == KeyEvent.KEYCODE_META_RIGHT
+        return shortcutKeys.onKey(event.keyCode, meta, event.action == KeyEvent.ACTION_DOWN, event.repeatCount > 0, chordOf(event), captured)
     }
 
     private fun chordOf(event: KeyEvent): KeyChord? {
