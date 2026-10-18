@@ -14,8 +14,6 @@ import dev.halone.app.panel.GeckoKeyboard
 import dev.halone.app.panel.GeckoPanel
 import dev.halone.app.panel.WebAppEngine
 import dev.halone.app.stereo.GlassesStereoSession
-import dev.halone.compositor.CollisionPolicy
-import dev.halone.compositor.DockVisibility
 import dev.halone.compositor.Panel
 import dev.halone.compositor.SizeLimits
 import dev.halone.engine.plugin.PluginConnection
@@ -60,6 +58,7 @@ import dev.halone.shell.SystemInfo
 import dev.halone.shell.WebApp
 import dev.halone.shell.WebAppControl
 import dev.halone.shell.WebApps
+import dev.halone.shell.applyTo
 import dev.halone.shell.WebManifest
 import dev.halone.shell.WindowKind
 import java.util.concurrent.Executors
@@ -764,22 +763,7 @@ class ShellSession(
 
     override fun applySettings(settings: ShellSettings, changedKey: String?) {
         val scene = stereo.scene
-        scene.followsHead = settings.boolean(ShellSettings.FOLLOW_ENABLED)
-        scene.followMarginDegrees = settings.number(ShellSettings.FOLLOW_MARGIN_DEGREES).toFloat()
-        scene.catchUpSeconds = settings.number(ShellSettings.FOLLOW_CATCH_UP_SECONDS).toFloat()
-        scene.collisionPolicy = when (settings.string(ShellSettings.COLLISION_POLICY)) {
-            "overlap" -> CollisionPolicy.OVERLAP
-            "avoid-pinned" -> CollisionPolicy.AVOID_PINNED
-            else -> CollisionPolicy.AVOID_ALL
-        }
-        scene.dockVisibility = if (settings.string(ShellSettings.DOCK_VISIBILITY) == "auto-hide") {
-            DockVisibility.AUTO_HIDE
-        } else {
-            DockVisibility.ALWAYS
-        }
-        scene.windowsHideDelaySeconds = settings.number(ShellSettings.WINDOWS_AUTO_HIDE_DELAY_SECONDS).toFloat()
-        val spacing = settings.number(ShellSettings.SLOT_SPACING_DEGREES).toFloat()
-        if (spacing != scene.slotSpacingDegrees) scene.layOutCylindrical(spacing, immediate = false)
+        settings.applyTo(scene)
 
         if (changedKey == ShellSettings.DISPLAY_BRIGHTNESS) {
             val control = brightness

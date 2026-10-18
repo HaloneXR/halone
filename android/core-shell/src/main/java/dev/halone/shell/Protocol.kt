@@ -29,9 +29,10 @@ data class SystemInfo(
     val verticalFovDegrees: Double,
     val displayWidthPx: Int,
     val displayHeightPx: Int,
+    val platform: String = "android",
 ) {
     fun toJson(): JSONObject = JSONObject()
-        .put("platform", "android")
+        .put("platform", platform)
         .put("version", version)
         .put("protocolVersion", Protocol.VERSION)
         .put(
