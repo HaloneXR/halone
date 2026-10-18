@@ -5,6 +5,9 @@ import dev.halone.desktop.compositor.vk.VulkanContext
 import java.io.File
 import java.util.concurrent.ConcurrentLinkedQueue
 
+/** Where a panel's page is, as the producer last said. */
+data class PageState(val title: String, val url: String, val loading: Boolean, val canGoBack: Boolean, val canGoForward: Boolean)
+
 data class PanelSpec(val width: Int, val height: Int, val url: String) {
     override fun toString() = "${width}x$height@$url"
 
@@ -60,6 +63,12 @@ class ProducerHost(
     /** Called on the render thread when a panel's content asks for another cursor. */
     var onCursorChanged: ((index: Int, shape: CursorShape) -> Unit)? = null
 
+    /** Called on the render thread when a panel's page changes its title, URL, or loading and history state. */
+    var onPageChanged: ((index: Int, page: PageState) -> Unit)? = null
+
+    /** Called on the render thread when a panel's page asks for [url] in a new window or tab. */
+    var onPopup: ((index: Int, url: String, background: Boolean) -> Unit)? = null
+
     /** Called on the render thread just before a replaced texture is closed. */
     var onTextureClosed: ((ProducerTexture) -> Unit)? = null
 
@@ -106,6 +115,10 @@ class ProducerHost(
                     }
                 }
                 ProducerEvent.CURSOR -> onCursorChanged?.invoke(e.panel, CursorShape.ofCss(e.cursor))
+                ProducerEvent.PAGE -> if (e.panel !in closed) onPageChanged?.invoke(e.panel, PageState(e.title, e.text,
+                    loading = e.flags and PAGE_LOADING != 0, canGoBack = e.flags and PAGE_CAN_GO_BACK != 0,
+                    canGoForward = e.flags and PAGE_CAN_GO_FORWARD != 0))
+                ProducerEvent.POPUP -> if (e.panel !in closed) onPopup?.invoke(e.panel, e.text, e.flags != 0)
                 ProducerEvent.FRAME -> {
                     if (e.panel in closed) {
                         transport.skipped(e.panel, e.index, e.generation)
@@ -152,9 +165,10 @@ class ProducerHost(
      * its surfaces arrive. [script] runs after each load of a page on [origin],
      * which [root] serves when given.
      */
-    fun open(widthPx: Int, heightPx: Int, url: String, origin: String = "", script: String = "", root: File? = null): Int {
+    fun open(widthPx: Int, heightPx: Int, url: String, origin: String = "", script: String = "", root: File? = null, private: Boolean = false): Int {
         val panel = nextPanel++
-        val send = { transport.open(panel, widthPx, heightPx, url, origin, script, root?.absolutePath.orEmpty()) }
+        val flags = if (private) OPEN_PRIVATE else 0
+        val send = { transport.open(panel, widthPx, heightPx, flags, url, origin, script, root?.absolutePath.orEmpty()) }
         if (transport.connected && waiting.isEmpty()) send() else waiting += send
         return panel
     }
@@ -168,6 +182,11 @@ class ProducerHost(
         resizes.remove(panel)?.surfaces?.release()
         textures.remove(panel)?.let { retired.addLast(it to frame) }
         closed += panel
+    }
+
+    fun command(panel: Int, kind: Int, text: String = "") {
+        val send = { transport.command(panel, kind, text) }
+        if (transport.connected && waiting.isEmpty()) send() else waiting += send
     }
 
     /** Asks the producer to lay [panel]'s page out at a new size; [onPanelResized] follows. */
@@ -221,5 +240,16 @@ class ProducerHost(
         const val INPUT_KEY_DOWN = 6
         const val INPUT_KEY_UP = 7
         const val INPUT_FOCUS = 8
+
+        const val COMMAND_NAVIGATE = 1
+        const val COMMAND_BACK = 2
+        const val COMMAND_FORWARD = 3
+        const val COMMAND_RELOAD = 4
+        const val COMMAND_STOP = 5
+
+        private const val OPEN_PRIVATE = 1
+        private const val PAGE_LOADING = 1
+        private const val PAGE_CAN_GO_BACK = 2
+        private const val PAGE_CAN_GO_FORWARD = 4
     }
 }

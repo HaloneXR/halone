@@ -17,6 +17,8 @@ enum {
     HALONE_EVENT_HELLO = 1,
     HALONE_EVENT_FRAME = 2,
     HALONE_EVENT_CURSOR = 3,
+    HALONE_EVENT_PAGE = 4,
+    HALONE_EVENT_POPUP = 5,
 };
 
 typedef struct {
@@ -41,6 +43,9 @@ typedef struct {
     uint32_t offsets[SPIKE_MAX_SURFACES * SPIKE_MAX_PLANES];
     uint32_t strides[SPIKE_MAX_SURFACES * SPIKE_MAX_PLANES];
     char name[SPIKE_CURSOR_NAME_BYTES];
+    uint32_t flags;
+    char title[SPIKE_TITLE_BYTES];
+    char text[SPIKE_URL_BYTES];
 } halone_unix_event;
 
 static uint64_t now_ns(void) {
@@ -84,7 +89,8 @@ int32_t halone_receive(int32_t connection, halone_unix_event *out, int32_t timeo
         spike_hello hello;
         spike_frame frame;
         spike_cursor cursor;
-        char bytes[1024];
+        spike_page page;
+        spike_popup popup;
     } in;
     char control[CMSG_SPACE(sizeof(int) * SPIKE_MAX_SURFACES)];
     struct iovec iov = {&in, sizeof in};
@@ -147,6 +153,20 @@ int32_t halone_receive(int32_t connection, halone_unix_event *out, int32_t timeo
         out->panel = in.cursor.panel;
         memcpy(out->name, in.cursor.name, SPIKE_CURSOR_NAME_BYTES);
         out->name[SPIKE_CURSOR_NAME_BYTES - 1] = 0;
+    } else if (in.id == SPIKE_MSG_PAGE && (size_t)n >= sizeof in.page) {
+        out->kind = HALONE_EVENT_PAGE;
+        out->panel = in.page.panel;
+        out->flags = in.page.flags;
+        memcpy(out->title, in.page.title, SPIKE_TITLE_BYTES);
+        out->title[SPIKE_TITLE_BYTES - 1] = 0;
+        memcpy(out->text, in.page.url, SPIKE_URL_BYTES);
+        out->text[SPIKE_URL_BYTES - 1] = 0;
+    } else if (in.id == SPIKE_MSG_POPUP && (size_t)n >= sizeof in.popup) {
+        out->kind = HALONE_EVENT_POPUP;
+        out->panel = in.popup.panel;
+        out->flags = in.popup.background;
+        memcpy(out->text, in.popup.url, SPIKE_URL_BYTES);
+        out->text[SPIKE_URL_BYTES - 1] = 0;
     }
     return 0;
 }
@@ -207,7 +227,7 @@ static void copy_text(char *to, size_t size, const char *from) {
     to[size - 1] = 0;
 }
 
-int32_t halone_send_open(int32_t connection, uint32_t panel, uint32_t width, uint32_t height, const char *url,
+int32_t halone_send_open(int32_t connection, uint32_t panel, uint32_t width, uint32_t height, uint32_t flags, const char *url,
                          const char *origin, const char *script, const char *root) {
     spike_open o;
     memset(&o, 0, sizeof o);
@@ -215,11 +235,22 @@ int32_t halone_send_open(int32_t connection, uint32_t panel, uint32_t width, uin
     o.panel = panel;
     o.width = width;
     o.height = height;
+    o.flags = flags;
     copy_text(o.url, sizeof o.url, url);
     copy_text(o.origin, sizeof o.origin, origin);
     copy_text(o.script, sizeof o.script, script);
     copy_text(o.root, sizeof o.root, root);
     return send_packet(connection, &o, sizeof o);
+}
+
+int32_t halone_send_command(int32_t connection, uint32_t panel, uint32_t kind, const char *text) {
+    spike_command c;
+    memset(&c, 0, sizeof c);
+    c.id = SPIKE_MSG_COMMAND;
+    c.panel = panel;
+    c.kind = kind;
+    copy_text(c.text, sizeof c.text, text);
+    return send_packet(connection, &c, sizeof c);
 }
 
 int32_t halone_send_close(int32_t connection, uint32_t panel) {

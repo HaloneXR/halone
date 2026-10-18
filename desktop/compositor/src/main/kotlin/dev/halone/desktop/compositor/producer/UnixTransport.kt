@@ -30,6 +30,7 @@ import java.io.File
 @Structure.FieldOrder(
     "kind", "panel", "index", "count", "width", "height", "fourcc", "planes", "generation", "pad",
     "modifier", "seq", "begunNs", "paintedNs", "readyNs", "arrivedNs", "fds", "sizes", "offsets", "strides", "name",
+    "flags", "title", "text",
 )
 class UnixBridgeEvent : Structure() {
     @JvmField var kind = 0
@@ -53,6 +54,9 @@ class UnixBridgeEvent : Structure() {
     @JvmField var offsets = IntArray(MAX_SURFACES * MAX_PLANES)
     @JvmField var strides = IntArray(MAX_SURFACES * MAX_PLANES)
     @JvmField var name = ByteArray(BridgeEvent.CURSOR_NAME_BYTES)
+    @JvmField var flags = 0
+    @JvmField var title = ByteArray(BridgeEvent.TITLE_BYTES)
+    @JvmField var text = ByteArray(BridgeEvent.URL_BYTES)
 
     companion object {
         const val MAX_SURFACES = 8
@@ -72,7 +76,8 @@ interface UnixBridge : Library {
     ): Int
     fun halone_send_resize(connection: Int, panel: Int, width: Int, height: Int): Int
     fun halone_send_release(connection: Int, panel: Int, index: Int, generation: Int): Int
-    fun halone_send_open(connection: Int, panel: Int, width: Int, height: Int, url: String, origin: String, script: String, root: String): Int
+    fun halone_send_open(connection: Int, panel: Int, width: Int, height: Int, flags: Int, url: String, origin: String, script: String, root: String): Int
+    fun halone_send_command(connection: Int, panel: Int, kind: Int, text: String): Int
     fun halone_send_close(connection: Int, panel: Int): Int
     fun halone_close(fd: Int)
 
@@ -114,6 +119,9 @@ class UnixTransport : ProducerTransport {
                 event.seq, event.readyNs, event.arrivedNs)
             ProducerEvent.CURSOR -> ProducerEvent(ProducerEvent.CURSOR, event.panel,
                 cursor = event.name.takeWhile { it != 0.toByte() }.toByteArray().decodeToString())
+            ProducerEvent.PAGE -> ProducerEvent(ProducerEvent.PAGE, event.panel, flags = event.flags,
+                title = cString(event.title), text = cString(event.text))
+            ProducerEvent.POPUP -> ProducerEvent(ProducerEvent.POPUP, event.panel, flags = event.flags, text = cString(event.text))
             else -> null
         }
     }
@@ -136,8 +144,12 @@ class UnixTransport : ProducerTransport {
         if (connection >= 0) bridge.halone_send_resize(connection, panel, width, height)
     }
 
-    override fun open(panel: Int, width: Int, height: Int, url: String, origin: String, script: String, root: String) {
-        if (connection >= 0) bridge.halone_send_open(connection, panel, width, height, url, origin, script, root)
+    override fun open(panel: Int, width: Int, height: Int, flags: Int, url: String, origin: String, script: String, root: String) {
+        if (connection >= 0) bridge.halone_send_open(connection, panel, width, height, flags, url, origin, script, root)
+    }
+
+    override fun command(panel: Int, kind: Int, text: String) {
+        if (connection >= 0) bridge.halone_send_command(connection, panel, kind, text)
     }
 
     override fun closePanel(panel: Int) {

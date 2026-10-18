@@ -231,4 +231,34 @@ inline void injectBridge(CefRefPtr<CefFrame> frame, const std::string &origin, c
 
 inline std::string text(const char *field, size_t size) { return std::string(field, strnlen(field, size)); }
 
+// Where a panel's page is, as last told to the compositor, so only changes are sent.
+struct Page {
+    std::string title;
+    std::string url;
+    uint32_t flags = 0;
+
+    bool operator==(const Page &other) const { return title == other.title && url == other.url && flags == other.flags; }
+};
+
+inline uint32_t pageFlags(bool loading, bool canGoBack, bool canGoForward) {
+    return (loading ? SPIKE_PAGE_LOADING : 0) | (canGoBack ? SPIKE_PAGE_CAN_GO_BACK : 0) | (canGoForward ? SPIKE_PAGE_CAN_GO_FORWARD : 0);
+}
+
+inline void runCommand(CefRefPtr<CefBrowser> browser, uint32_t kind, const std::string &text) {
+    switch (kind) {
+        case SPIKE_COMMAND_NAVIGATE: browser->GetMainFrame()->LoadURL(text); break;
+        case SPIKE_COMMAND_BACK: browser->GoBack(); break;
+        case SPIKE_COMMAND_FORWARD: browser->GoForward(); break;
+        case SPIKE_COMMAND_RELOAD: browser->Reload(); break;
+        case SPIKE_COMMAND_STOP: browser->StopLoad(); break;
+    }
+}
+
+// A private panel's profile: in memory, its own, gone with it. Null for the shared one.
+inline CefRefPtr<CefRequestContext> contextFor(bool isPrivate) {
+    return isPrivate ? CefRequestContext::CreateContext(CefRequestContextSettings(), nullptr) : nullptr;
+}
+
+inline bool inBackground(cef_window_open_disposition_t disposition) { return disposition == CEF_WOD_NEW_BACKGROUND_TAB; }
+
 }  // namespace producer

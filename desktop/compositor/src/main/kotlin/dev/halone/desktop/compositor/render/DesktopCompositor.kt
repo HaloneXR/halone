@@ -33,6 +33,9 @@ import kotlin.math.asin
 import kotlin.math.atan2
 import kotlin.math.tan
 
+/** The page in a panel's top band, drawn from its texture's top [visibleHeightPx] rows. */
+class PanelLayer(var texture: TextureSource, val producerIndex: Int?, var visibleHeightPx: Int)
+
 class DesktopPanel(
     id: String,
     override var widthPx: Int,
@@ -47,6 +50,18 @@ class DesktopPanel(
 
     /** The producer's number for this panel, when a producer draws it. */
     var producerIndex: Int? = null
+
+    /** A page drawn in a band across the top over the content, as a web window's browser chrome; null for none. */
+    var layer: PanelLayer? = null
+
+    /** Whether keys go to [layer], as when its field was last pressed, rather than to the content. */
+    var keysToLayer = false
+
+    /** The producer panel keys go to. */
+    val keyProducerIndex: Int? get() = layer?.takeIf { keysToLayer }?.producerIndex ?: producerIndex
+
+    /** The band [layer] takes across the top, in this panel's pixels. */
+    val bandPx: Int get() = layer?.visibleHeightPx ?: 0
 
     /** Asks whatever draws the content to lay it out at a new size. */
     var onResizeContent: ((widthPx: Int, heightPx: Int) -> Unit)? = null
@@ -160,15 +175,33 @@ class DesktopCompositor(private val vk: VulkanContext, colorFormat: Int, val ver
         notice?.let { drawNotice(cmd, it, viewProjection) }
     }
 
-    /** Draws a panel's page; false if it has nothing to show yet. */
+    /** Draws a panel's page, and the page in its top band; false if it has nothing to show yet. */
     private fun drawContent(cmd: VkCommandBuffer, panel: DesktopPanel, vp: FloatArray, alpha: Float): Boolean {
         if (!panel.texture.ready) return false
         if (alpha <= 0f) return true
         val width = panel.widthPx.toFloat()
         val height = panel.heightPx.toFloat()
         panels.bind(cmd)
-        panels.draw(cmd, panel.texture, Mat4.multiply(vp, panelModel(panel, width, height)), width, height, panel.cornerRadiusPx, alpha)
+        val layer = panel.layer
+        val band = panel.bandPx.toFloat()
+        if (layer == null || band <= 0f) {
+            panels.draw(cmd, panel.texture, Mat4.multiply(vp, panelModel(panel, width, height)), width, height, panel.cornerRadiusPx, alpha)
+            return true
+        }
+        panels.drawPart(cmd, panel.texture, Mat4.multiply(vp, partModel(panel, band, height - band)), width, height,
+            band, height - band, 1f, panel.cornerRadiusPx, alpha)
+        if (layer.texture.ready) {
+            panels.drawPart(cmd, layer.texture, Mat4.multiply(vp, partModel(panel, 0f, band)), width, height,
+                0f, band, band / layer.texture.heightPx, panel.cornerRadiusPx, alpha)
+        }
         return true
+    }
+
+    /** A full-width band of the window, [top] and [partHeight] in its pixels from its top edge. */
+    private fun partModel(panel: DesktopPanel, top: Float, partHeight: Float): FloatArray {
+        val metresPerPx = panel.pose.widthMetres / panel.widthPx
+        val basis = panelBasis(panel, 0f, -(top + partHeight / 2f - panel.heightPx / 2f) * metresPerPx, ChromeLayout.drawDistance(scene, panel))
+        return Mat4.multiply(basis, Mat4.scale(panel.widthPx * metresPerPx, partHeight * metresPerPx, 1f))
     }
 
     /** Rotated to [panel]'s heading and elevation, then moved [x], [y] across it and [distance] out. */

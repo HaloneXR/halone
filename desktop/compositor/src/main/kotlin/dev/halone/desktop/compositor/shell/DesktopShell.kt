@@ -15,7 +15,14 @@ import dev.halone.desktop.shell.DesktopStorageAccess
 import dev.halone.desktop.shell.DesktopThumbnails
 import dev.halone.desktop.shell.FileStore
 import dev.halone.shell.AppInfo
+import dev.halone.shell.Bookmarks
 import dev.halone.shell.BridgeHost
+import dev.halone.shell.BrowserBand
+import dev.halone.shell.BrowserControl
+import dev.halone.shell.BrowserData
+import dev.halone.shell.BrowserHistory
+import dev.halone.shell.Downloads
+import dev.halone.shell.ShellListener
 import dev.halone.shell.DevCommands
 import dev.halone.shell.InstalledApp
 import dev.halone.shell.PackageApps
@@ -60,6 +67,13 @@ class DesktopShell(
     private val background = Executors.newFixedThreadPool(2) { Thread(it, "shell-background").apply { isDaemon = true } }
     private val sockets = BridgeSockets(::post, log)
     private val byProducer = HashMap<Int, DesktopPanel>()
+    private val browsers = HashMap<String, DesktopBrowser>()
+    private val browserOf = HashMap<Int, DesktopBrowser>()
+    private val browsing = BrowserData(
+        BrowserHistory(FileStore("history.json", io)),
+        Bookmarks(FileStore("bookmarks.json", io)),
+        Downloads(FileStore("downloads.json", io)),
+    )
     private var noticeUntilNs = 0L
     private var lastPollNs = 0L
 
@@ -99,6 +113,7 @@ class DesktopShell(
         ),
         log,
         files = files,
+        browsing = browsing,
         onMain = ::post,
         background = { background.execute(it) },
         sockets = tcp,
@@ -136,9 +151,16 @@ class DesktopShell(
     }
 
     init {
-        host.onPanelReady = { index, texture -> byProducer[index]?.texture = texture }
-        host.onPanelResized = { index, texture -> byProducer[index]?.texture = texture }
+        host.onPanelReady = ::textureArrived
+        host.onPanelResized = ::textureArrived
         host.onCursorChanged = { index, shape -> byProducer[index]?.cursorShape = shape }
+        host.onPageChanged = { index, page -> browserOf[index]?.page(index, page) }
+        host.onPopup = { index, url, background -> browserOf[index]?.popup(index, url, background) }
+        shell.addListener(object : ShellListener {
+            override fun onBrowserCommand(windowId: String, command: String) {
+                if (command == FOCUS_ADDRESS) browsers[windowId]?.panel?.keysToLayer = true
+            }
+        })
     }
 
     fun start() {
@@ -196,7 +218,17 @@ class DesktopShell(
         return panel
     }
 
+    private fun textureArrived(index: Int, texture: TextureSource) {
+        val browser = browserOf[index]
+        if (browser != null) browser.texture(index, texture) else byProducer[index]?.texture = texture
+    }
+
     private fun dispose(panel: DesktopPanel) {
+        browsers.remove(panel.id)?.let { browser ->
+            browser.close()
+            sockets.unregister(panel.id)
+            return
+        }
         panel.producerIndex?.let {
             byProducer.remove(it)
             host.close(it, frame())
@@ -221,11 +253,35 @@ class DesktopShell(
         return panel
     }
 
-    override fun openWeb(windowId: String, url: String, private: Boolean): DesktopPanel {
-        val panel = producerPanel(windowId, WEB_WIDTH_PX, WEB_HEIGHT_PX, url, null)
+    /** A web window, as ShellSession makes one: the browser page across the top, with the bridge, and the tabs below. */
+    override fun openWeb(windowId: String, url: String, private: Boolean): DesktopPanel? {
+        val chromeApp = shell.apps.firstOrNull { it.id == BROWSER_CHROME } ?: return null
+        val height = WEB_HEIGHT_PX + BrowserBand.TOOLBAR_PX
+        val panel = DesktopPanel(windowId, WEB_WIDTH_PX, height, NoTexture, PanelPose(distanceMetres = distance()))
+        panel.fitToFov(verticalFovDegrees, fillFor(height))
+        val script = sockets.register(windowId, Shell.ORIGIN) { channel -> bridge.connect(windowId, channel) }
+        val chromeIndex = host.open(WEB_WIDTH_PX, chromeApp.heightPx, Shell.ORIGIN + chromeApp.entry, Shell.ORIGIN, script)
+        val browser = DesktopBrowser(
+            host, panel, chromeApp.heightPx, browsing.history, frame,
+            claim = { index ->
+                byProducer[index] = panel
+                browserOf[index] = browsers.getValue(windowId)
+            },
+            release = { index ->
+                byProducer.remove(index)
+                browserOf.remove(index)
+            },
+        )
+        browsers[windowId] = browser
+        browser.start(chromeIndex, url, private)
+        panel.onResizeContent = browser::resized
+        panel.sizeLimits = SizeLimits.defaultFor(WEB_WIDTH_PX, height)
         scene.open(panel)
+        log("  shell: opened a web window as $windowId")
         return panel
     }
+
+    override fun browser(windowId: String): BrowserControl? = browsers[windowId]
 
     override fun openOverlays(dock: AppInfo, dockUrl: String, launcher: AppInfo, launcherUrl: String) {
         val dockPanel = producerPanel(dock.id, dock.widthPx, dock.heightPx, dockUrl, Shell.ORIGIN)
@@ -303,19 +359,12 @@ class DesktopShell(
         background.shutdown()
     }
 
-    /** A panel's picture before the producer's first frame: nothing to draw yet. */
-    private object NoTexture : TextureSource {
-        override val view = 0L
-        override val widthPx = 1
-        override val heightPx = 1
-        override val ready = false
-        override fun close() = Unit
-    }
-
     private companion object {
         const val REGISTRY = "apps.json"
         const val PANEL_VERTICAL_FILL = 0.75f
         const val REFERENCE_HEIGHT_PX = 800f
+        const val BROWSER_CHROME = "browser"
+        const val FOCUS_ADDRESS = "focus-address"
         const val WEB_WIDTH_PX = 1280
         const val WEB_HEIGHT_PX = 800
         const val MENU_CORNER_PX = 14f

@@ -137,12 +137,24 @@ class PanelPipeline(private val vk: VulkanContext, colorFormat: Int) : AutoClose
 
     /** [mvp] maps the unit quad (-0.5..0.5, y up) onto the panel, already in Vulkan clip space. */
     fun draw(cmd: VkCommandBuffer, texture: TextureSource, mvp: FloatArray, widthPx: Float, heightPx: Float, radiusPx: Float, alpha: Float) =
+        drawPart(cmd, texture, mvp, widthPx, heightPx, 0f, heightPx, 1f, radiusPx, alpha)
+
+    /**
+     * A full-width band of a window, [topPx] and [partHeightPx] in its pixels,
+     * [mvp] mapping the unit quad onto the band; the texture's top [cropV] of
+     * its height fills it. The window's rounded corners still cut it.
+     */
+    fun drawPart(
+        cmd: VkCommandBuffer, texture: TextureSource, mvp: FloatArray, widthPx: Float, heightPx: Float,
+        topPx: Float, partHeightPx: Float, cropV: Float, radiusPx: Float, alpha: Float,
+    ) =
         stackPush().use { stack ->
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, stack.longs(descriptorFor(texture.view)), null)
             val push = stack.malloc(PUSH_BYTES)
             mvp.forEach { push.putFloat(it) }
-            push.putFloat(0f).putFloat(0f).putFloat(widthPx).putFloat(heightPx)
+            push.putFloat(0f).putFloat(topPx).putFloat(widthPx).putFloat(partHeightPx)
             push.putFloat(widthPx).putFloat(heightPx).putFloat(radiusPx).putFloat(alpha)
+            push.putFloat(1f).putFloat(cropV)
             push.flip()
             vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT or VK_SHADER_STAGE_FRAGMENT_BIT, 0, push)
             vkCmdDraw(cmd, 4, 1, 0, 0)
@@ -157,7 +169,7 @@ class PanelPipeline(private val vk: VulkanContext, colorFormat: Int) : AutoClose
     }
 
     private companion object {
-        const val PUSH_BYTES = 96
+        const val PUSH_BYTES = 104
         const val MAX_TEXTURES = 64
 
         val PUSH = """
@@ -167,6 +179,7 @@ class PanelPipeline(private val vk: VulkanContext, colorFormat: Int) : AutoClose
                 vec2 sizePx;
                 float radiusPx;
                 float alpha;
+                vec2 uvScale;
             } pc;
         """.trimIndent()
 
@@ -195,7 +208,7 @@ class PanelPipeline(private val vk: VulkanContext, colorFormat: Int) : AutoClose
                 vec2 window = pc.rectPx.xy + vUv * pc.rectPx.zw;
                 float d = roundedRect(window - 0.5 * pc.sizePx, 0.5 * pc.sizePx, pc.radiusPx);
                 float coverage = clamp(0.5 - d / fwidth(d), 0.0, 1.0);
-                color = texture(content, vUv) * (coverage * pc.alpha);
+                color = texture(content, vUv * pc.uvScale) * (coverage * pc.alpha);
             }
         """.trimIndent()
     }

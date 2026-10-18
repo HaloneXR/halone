@@ -28,13 +28,21 @@ class ProducerEvent(
     val arrivedNs: Long = 0,
     val surfaces: ProducerSurfaces? = null,
     val cursor: String = "",
+    val flags: Int = 0,
+    val title: String = "",
+    val text: String = "",
 ) {
     companion object {
         const val HELLO = 1
         const val FRAME = 2
         const val CURSOR = 3
+        const val PAGE = 4
+        const val POPUP = 5
     }
 }
+
+/** A NUL-terminated UTF-8 field of a native event. */
+fun cString(bytes: ByteArray): String = bytes.takeWhile { it != 0.toByte() }.toByteArray().decodeToString()
 
 /**
  * How the compositor and a producer process talk: Mach ports and IOSurfaces on
@@ -59,7 +67,10 @@ interface ProducerTransport : AutoCloseable {
     fun resize(panel: Int, width: Int, height: Int)
 
     /** A new panel on [url]; [script] runs after each load of a page on [origin], which [root] serves when not empty. */
-    fun open(panel: Int, width: Int, height: Int, url: String, origin: String, script: String, root: String)
+    fun open(panel: Int, width: Int, height: Int, flags: Int, url: String, origin: String, script: String, root: String)
+
+    /** Asks [panel]'s page to navigate, go back or forward, reload or stop. */
+    fun command(panel: Int, kind: Int, text: String)
 
     fun closePanel(panel: Int)
 

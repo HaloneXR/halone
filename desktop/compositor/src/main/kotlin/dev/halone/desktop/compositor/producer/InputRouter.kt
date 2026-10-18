@@ -96,23 +96,37 @@ class InputRouter(
     private var keyTarget: Int? = null
 
     /** Where keys go, as on Android: the menu, the launcher when it shows, or the focused window. */
-    private fun keyTarget(): Int? = scene.keyTarget?.producerIndex ?: focused
+    private fun keyTarget(): Int? = scene.keyTarget?.keyProducerIndex ?: focused
 
     /** Tells the producer when keys start going to another panel, so its page has the keyboard focus. Call every frame. */
     fun followKeyTarget() {
-        val target = scene.keyTarget?.producerIndex ?: return
+        val target = scene.keyTarget?.keyProducerIndex ?: return
         if (target == keyTarget) return
         keyTarget = target
         host?.input(target, ProducerHost.INPUT_FOCUS, 0f, 0f)
     }
 
+    /** A producer page of a panel and a point in its pixels: the band's page above [DesktopPanel.bandPx], the content below. */
+    private class Target(val index: Int, val x: Float, val y: Float, val inLayer: Boolean)
+
+    /** Which page a press began on, so a drag across the band stays with it, as on Android; null with no button down. */
+    private var pressedInLayer: Boolean? = null
+
+    private fun target(panel: DesktopPanel, x: Float, y: Float): Target? {
+        val band = panel.bandPx
+        val layer = panel.layer
+        val inLayer = layer != null && (pressedInLayer ?: (y < band))
+        return if (inLayer) layer!!.producerIndex?.let { Target(it, x, y, true) }
+        else panel.producerIndex?.let { Target(it, x, y - band, false) }
+    }
+
     private fun hover(modifiers: Int) {
         val hit = scene.hitTest(direction)?.takeIf { it.part == HitPart.CONTENT }
-        val index = hit?.panel?.producerIndex
-        hovered?.takeIf { it != index }?.let { host?.input(it, ProducerHost.INPUT_LEAVE, 0f, 0f) }
-        hovered = index
-        if (hit != null && index != null) {
-            host?.input(index, ProducerHost.INPUT_MOVE, hit.hit.x, hit.hit.y, button = buttons, modifiers = macFlags(modifiers))
+        val target = hit?.let { target(it.panel, it.hit.x, it.hit.y) }
+        hovered?.takeIf { it != target?.index }?.let { host?.input(it, ProducerHost.INPUT_LEAVE, 0f, 0f) }
+        hovered = target?.index
+        if (target != null) {
+            host?.input(target.index, ProducerHost.INPUT_MOVE, target.x, target.y, button = buttons, modifiers = macFlags(modifiers))
         }
     }
 
@@ -132,26 +146,29 @@ class InputRouter(
         }
         if (hit == null || hit.part != HitPart.CONTENT) return
         val host = host ?: return
-        val index = hit.panel.producerIndex ?: return
+        val target = target(hit.panel, hit.hit.x, hit.hit.y) ?: return
         val mask = 1 shl button
         if (pressed) {
             clicks = if (button == lastClickButton && now - lastClickAt < DOUBLE_CLICK_SECONDS) clicks + 1 else 1
             lastClickAt = now
             lastClickButton = button
             buttons = buttons or mask
-            focused = index
+            focused = target.index
+            pressedInLayer = target.inLayer
+            hit.panel.keysToLayer = target.inLayer
         } else {
             buttons = buttons and mask.inv()
+            if (buttons == 0) pressedInLayer = null
         }
-        host.input(index, if (pressed) ProducerHost.INPUT_DOWN else ProducerHost.INPUT_UP, hit.hit.x, hit.hit.y,
+        host.input(target.index, if (pressed) ProducerHost.INPUT_DOWN else ProducerHost.INPUT_UP, target.x, target.y,
             button = button, clicks = clicks, modifiers = macFlags(modifiers))
     }
 
     fun scroll(dx: Double, dy: Double, modifiers: Int) {
         val hit = scene.hitTest(direction)?.takeIf { it.part == HitPart.CONTENT } ?: return
-        val index = hit.panel.producerIndex ?: return
+        val target = target(hit.panel, hit.hit.x, hit.hit.y) ?: return
         val host = host ?: return
-        host.input(index, ProducerHost.INPUT_WHEEL, hit.hit.x, hit.hit.y,
+        host.input(target.index, ProducerHost.INPUT_WHEEL, target.x, target.y,
             dx = (dx * WHEEL_PIXELS).toFloat(), dy = (dy * WHEEL_PIXELS).toFloat(), modifiers = macFlags(modifiers))
     }
 

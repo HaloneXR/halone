@@ -17,6 +17,26 @@ enum {
     SPIKE_MSG_RELEASE = 7,
     SPIKE_MSG_OPEN = 8,
     SPIKE_MSG_CLOSE = 9,
+    SPIKE_MSG_PAGE = 10,
+    SPIKE_MSG_COMMAND = 11,
+    SPIKE_MSG_POPUP = 12,
+};
+
+/* OPEN's flags: a private panel keeps nothing, in a profile of its own in memory. */
+#define SPIKE_OPEN_PRIVATE 1u
+
+/* PAGE's flags. */
+#define SPIKE_PAGE_LOADING 1u
+#define SPIKE_PAGE_CAN_GO_BACK 2u
+#define SPIKE_PAGE_CAN_GO_FORWARD 4u
+
+/* What a COMMAND asks of a panel's page; NAVIGATE takes the URL in its text. */
+enum {
+    SPIKE_COMMAND_NAVIGATE = 1,
+    SPIKE_COMMAND_BACK = 2,
+    SPIKE_COMMAND_FORWARD = 3,
+    SPIKE_COMMAND_RELOAD = 4,
+    SPIKE_COMMAND_STOP = 5,
 };
 
 #define SPIKE_CURSOR_NAME_BYTES 32
@@ -24,6 +44,7 @@ enum {
 #define SPIKE_ORIGIN_BYTES 256
 #define SPIKE_SCRIPT_BYTES 4096
 #define SPIKE_PATH_BYTES 1024
+#define SPIKE_TITLE_BYTES 512
 
 enum {
     SPIKE_INPUT_MOVE = 1,
@@ -101,6 +122,7 @@ typedef struct {
     uint32_t panel;
     uint32_t width;
     uint32_t height;
+    uint32_t flags;
     char url[SPIKE_URL_BYTES];
     char origin[SPIKE_ORIGIN_BYTES];
     char script[SPIKE_SCRIPT_BYTES];
@@ -119,6 +141,30 @@ typedef struct {
     char name[SPIKE_CURSOR_NAME_BYTES];
 } spike_cursor;
 
+/* Where a panel's page is: its title, its URL, and the PAGE flags. Sent on every change. */
+typedef struct {
+    mach_msg_header_t header;
+    uint32_t panel;
+    uint32_t flags;
+    char title[SPIKE_TITLE_BYTES];
+    char url[SPIKE_URL_BYTES];
+} spike_page;
+
+typedef struct {
+    mach_msg_header_t header;
+    uint32_t panel;
+    uint32_t kind;
+    char text[SPIKE_URL_BYTES];
+} spike_command;
+
+/* A panel's page asked for [url] in a new window or tab, which the producer did not open. */
+typedef struct {
+    mach_msg_header_t header;
+    uint32_t panel;
+    uint32_t background;
+    char url[SPIKE_URL_BYTES];
+} spike_popup;
+
 typedef union {
     mach_msg_header_t header;
     struct {
@@ -133,6 +179,14 @@ typedef union {
         spike_cursor msg;
         mach_msg_trailer_t trailer;
     } cursor;
+    struct {
+        spike_page msg;
+        mach_msg_trailer_t trailer;
+    } page;
+    struct {
+        spike_popup msg;
+        mach_msg_trailer_t trailer;
+    } popup;
 } spike_consumer_inbox;
 
 typedef union {
@@ -157,6 +211,10 @@ typedef union {
         spike_close msg;
         mach_msg_trailer_t trailer;
     } close;
+    struct {
+        spike_command msg;
+        mach_msg_trailer_t trailer;
+    } command;
 } spike_producer_inbox;
 
 #else
@@ -251,6 +309,7 @@ typedef struct {
     uint32_t panel;
     uint32_t width;
     uint32_t height;
+    uint32_t flags;
     char url[SPIKE_URL_BYTES];
     char origin[SPIKE_ORIGIN_BYTES];
     char script[SPIKE_SCRIPT_BYTES];
@@ -261,5 +320,29 @@ typedef struct {
     uint32_t id;
     uint32_t panel;
 } spike_close;
+
+/* Where a panel's page is: its title, its URL, and the PAGE flags. Sent on every change. */
+typedef struct {
+    uint32_t id;
+    uint32_t panel;
+    uint32_t flags;
+    char title[SPIKE_TITLE_BYTES];
+    char url[SPIKE_URL_BYTES];
+} spike_page;
+
+typedef struct {
+    uint32_t id;
+    uint32_t panel;
+    uint32_t kind;
+    char text[SPIKE_URL_BYTES];
+} spike_command;
+
+/* A panel's page asked for [url] in a new window or tab, which the producer did not open. */
+typedef struct {
+    uint32_t id;
+    uint32_t panel;
+    uint32_t background;
+    char url[SPIKE_URL_BYTES];
+} spike_popup;
 
 #endif

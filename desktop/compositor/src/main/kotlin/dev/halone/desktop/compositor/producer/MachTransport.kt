@@ -42,6 +42,9 @@ class MachTransport : ProducerTransport {
                 readyNs = event.readyNs, arrivedNs = event.arrivedNs)
             BridgeEvent.CURSOR -> ProducerEvent(ProducerEvent.CURSOR, event.panel,
                 cursor = event.name.takeWhile { it != 0.toByte() }.toByteArray().decodeToString())
+            BridgeEvent.PAGE -> ProducerEvent(ProducerEvent.PAGE, event.panel, flags = event.flags,
+                title = cString(event.title), text = cString(event.text))
+            BridgeEvent.POPUP -> ProducerEvent(ProducerEvent.POPUP, event.panel, flags = event.flags, text = cString(event.text))
             else -> null
         }
     }
@@ -59,8 +62,12 @@ class MachTransport : ProducerTransport {
         if (producerPort != 0) bridge.halone_send_resize(producerPort, panel, width, height)
     }
 
-    override fun open(panel: Int, width: Int, height: Int, url: String, origin: String, script: String, root: String) {
-        if (producerPort != 0) bridge.halone_send_open(producerPort, panel, width, height, url, origin, script, root)
+    override fun open(panel: Int, width: Int, height: Int, flags: Int, url: String, origin: String, script: String, root: String) {
+        if (producerPort != 0) bridge.halone_send_open(producerPort, panel, width, height, flags, url, origin, script, root)
+    }
+
+    override fun command(panel: Int, kind: Int, text: String) {
+        if (producerPort != 0) bridge.halone_send_command(producerPort, panel, kind, text)
     }
 
     override fun closePanel(panel: Int) {

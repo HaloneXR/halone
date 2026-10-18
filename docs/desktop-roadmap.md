@@ -282,7 +282,19 @@ settings and shortcuts. The simulator's dev server is a reference for several.
     FOCUS (from the Linux session).
   - The CLI's `--desktop` target (halone-sdk's `desktop` branch): dev,
     install, uninstall and list, checked against the running shell.
-  - Left: media; web windows' browser chrome.
+  - Web windows, as BrowserEngine is on Android: the browser system app
+    in a band across the top (its rows from the shared `BrowserBand`), the
+    tabs below, each a producer page. The producer reports each page's
+    title, URL and loading and history state (PAGE) and the links it asks
+    for in a new window (POPUP, opened as a tab); the compositor sends
+    navigate, back, forward, reload and stop (COMMAND). Private tabs get an
+    in-memory profile of their own. Input splits at the band, keys go to
+    the half last pressed or to the address field on `focus-address`, and
+    history and bookmarks are the shared `BrowserData`. Checked on macOS
+    through the shell: open, navigate, back, a second tab and its tab row.
+    Not yet: auto-hiding the toolbar on scroll, permission prompts, page
+    full screen, the page's context menu, downloads.
+  - Left: media.
 
 ### 6. Plugin contract
 
