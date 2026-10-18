@@ -28,13 +28,15 @@ class MachTransport : ProducerTransport {
 
     override val producerArguments = listOf("--spike-service=$service")
 
+    override val connected get() = producerPort != 0
+
     override fun receive(timeoutMs: Int): ProducerEvent? {
         if (bridge.halone_receive(port, event, timeoutMs) != 0) return null
         return when (event.kind) {
             BridgeEvent.HELLO -> {
                 if (producerPort == 0) producerPort = event.reply else bridge.halone_release_port(event.reply)
                 ProducerEvent(ProducerEvent.HELLO, event.panel,
-                    surfaces = IOSurfaces(event.surfaces.copyOf(event.count), event.width, event.height))
+                    surfaces = if (event.count == 0) null else IOSurfaces(event.surfaces.copyOf(event.count), event.width, event.height))
             }
             BridgeEvent.FRAME -> ProducerEvent(ProducerEvent.FRAME, event.panel, event.index, seq = event.seq,
                 readyNs = event.readyNs, arrivedNs = event.arrivedNs)
@@ -55,6 +57,14 @@ class MachTransport : ProducerTransport {
 
     override fun resize(panel: Int, width: Int, height: Int) {
         if (producerPort != 0) bridge.halone_send_resize(producerPort, panel, width, height)
+    }
+
+    override fun open(panel: Int, width: Int, height: Int, url: String, origin: String, script: String) {
+        if (producerPort != 0) bridge.halone_send_open(producerPort, panel, width, height, url, origin, script)
+    }
+
+    override fun closePanel(panel: Int) {
+        if (producerPort != 0) bridge.halone_send_close(producerPort, panel)
     }
 
     override fun showing(panel: Int, texture: ProducerTexture, index: Int) {

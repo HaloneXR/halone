@@ -60,6 +60,7 @@ dependencies {
     implementation(project(":core-glasses"))
     implementation(project(":core-compositor-common"))
     implementation(project(":desktop-glasses"))
+    implementation(project(":desktop-shell"))
     implementation(libs.jna) { version { strictly(libs.versions.jna.get()) } }
     implementation(libs.lwjgl)
     implementation(libs.lwjgl.glfw)

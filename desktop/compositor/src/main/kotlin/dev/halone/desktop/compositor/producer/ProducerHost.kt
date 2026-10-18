@@ -28,6 +28,8 @@ class ProducerHost(
     specs: List<PanelSpec>,
     marginMs: Float,
     log: File,
+    /** Served as https://halone.local/, where the system apps live; null serves nothing there. */
+    webRoot: File? = null,
 ) : AutoCloseable {
     private val transport = ProducerTransport.forThisPlatform()
     private val process: Process
@@ -41,7 +43,13 @@ class ProducerHost(
     private class Held(val panel: Int, val texture: ProducerTexture, val index: Int, val frame: Long)
     private val held = ArrayDeque<Held>()
     private val retired = ArrayDeque<Pair<ProducerTexture, Long>>()
+
+    private val closed = HashSet<Int>()
+
+    /** What was asked of the producer before it was connected. */
+    private val waiting = mutableListOf<() -> Unit>()
     private val newFrames = HashMap<Int, Int>()
+    private var nextPanel = specs.size
 
     /** Called on the render thread when a panel's surfaces arrive. */
     var onPanelReady: ((index: Int, texture: ProducerTexture) -> Unit)? = null
@@ -62,7 +70,7 @@ class ProducerHost(
                 "--spike-panels=${specs.joinToString(",")}",
                 "--spike-margin=$marginMs",
                 "--spike-surfaces=$SURFACES",
-            ),
+            ) + listOfNotNull(webRoot?.let { "--halone-web-root=${it.absolutePath}" }),
         ).redirectErrorStream(true).redirectOutput(log).start()
     }
 
@@ -77,12 +85,18 @@ class ProducerHost(
      * its page at the new size is taken up once it thaws and has painted.
      */
     fun update(frame: Long, frozen: (Int) -> Boolean = { false }) {
+        if (transport.connected && waiting.isNotEmpty()) {
+            waiting.forEach { it() }
+            waiting.clear()
+        }
         while (true) {
             val e = events.poll() ?: break
             when (e.kind) {
                 ProducerEvent.HELLO -> {
-                    val surfaces = e.surfaces!!
-                    if (e.panel in textures) {
+                    val surfaces = e.surfaces ?: continue
+                    if (e.panel in closed) {
+                        surfaces.release()
+                    } else if (e.panel in textures) {
                         resizes.put(e.panel, e)?.surfaces?.release()
                         pendingResized.remove(e.panel)
                     } else {
@@ -93,6 +107,10 @@ class ProducerHost(
                 }
                 ProducerEvent.CURSOR -> onCursorChanged?.invoke(e.panel, CursorShape.ofCss(e.cursor))
                 ProducerEvent.FRAME -> {
+                    if (e.panel in closed) {
+                        transport.skipped(e.panel, e.index, e.generation)
+                        continue
+                    }
                     val into = if (e.panel in resizes) pendingResized else pending
                     val previous = into[e.panel]
                     if ((previous?.seq ?: -1) < e.seq) {
@@ -127,6 +145,28 @@ class ProducerHost(
         while (retired.isNotEmpty() && frame - retired.first().second > HOLD_FRAMES) {
             close(retired.removeFirst().first)
         }
+    }
+
+    /**
+     * Opens a panel on [url], answering its number; [onPanelReady] follows once
+     * its surfaces arrive. [script] runs after each load of a page on [origin].
+     */
+    fun open(widthPx: Int, heightPx: Int, url: String, origin: String = "", script: String = ""): Int {
+        val panel = nextPanel++
+        val send = { transport.open(panel, widthPx, heightPx, url, origin, script) }
+        if (transport.connected && waiting.isEmpty()) send() else waiting += send
+        return panel
+    }
+
+    /** Closes [panel]; its texture is let go once no frame in flight can still be drawing it. */
+    fun close(panel: Int, frame: Long) {
+        val send = { transport.closePanel(panel) }
+        if (transport.connected && waiting.isEmpty()) send() else waiting += send
+        pending.remove(panel)
+        pendingResized.remove(panel)
+        resizes.remove(panel)?.surfaces?.release()
+        textures.remove(panel)?.let { retired.addLast(it to frame) }
+        closed += panel
     }
 
     /** Asks the producer to lay [panel]'s page out at a new size; [onPanelResized] follows. */

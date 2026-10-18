@@ -141,6 +141,38 @@ int32_t halone_send_resize(uint32_t producer, uint32_t panel, uint32_t width, ui
     return mach_msg(&r.header, MACH_SEND_MSG | MACH_SEND_TIMEOUT, sizeof r, 0, MACH_PORT_NULL, 0, MACH_PORT_NULL);
 }
 
+static void copy_text(char *to, size_t size, const char *from) {
+    if (from) strlcpy(to, from, size);
+}
+
+int32_t halone_send_open(uint32_t producer, uint32_t panel, uint32_t width, uint32_t height, const char *url,
+                         const char *origin, const char *script) {
+    spike_open o;
+    memset(&o, 0, sizeof o);
+    o.header.msgh_bits = MACH_MSGH_BITS_SET(MACH_MSG_TYPE_COPY_SEND, 0, 0, 0);
+    o.header.msgh_size = sizeof o;
+    o.header.msgh_remote_port = producer;
+    o.header.msgh_id = SPIKE_MSG_OPEN;
+    o.panel = panel;
+    o.width = width;
+    o.height = height;
+    copy_text(o.url, sizeof o.url, url);
+    copy_text(o.origin, sizeof o.origin, origin);
+    copy_text(o.script, sizeof o.script, script);
+    return mach_msg(&o.header, MACH_SEND_MSG | MACH_SEND_TIMEOUT, sizeof o, 0, MACH_PORT_NULL, 0, MACH_PORT_NULL);
+}
+
+int32_t halone_send_close(uint32_t producer, uint32_t panel) {
+    spike_close c;
+    memset(&c, 0, sizeof c);
+    c.header.msgh_bits = MACH_MSGH_BITS_SET(MACH_MSG_TYPE_COPY_SEND, 0, 0, 0);
+    c.header.msgh_size = sizeof c;
+    c.header.msgh_remote_port = producer;
+    c.header.msgh_id = SPIKE_MSG_CLOSE;
+    c.panel = panel;
+    return mach_msg(&c.header, MACH_SEND_MSG | MACH_SEND_TIMEOUT, sizeof c, 0, MACH_PORT_NULL, 0, MACH_PORT_NULL);
+}
+
 void halone_surface_use(uint64_t surface, int32_t delta) {
     IOSurfaceRef s = (IOSurfaceRef)(uintptr_t)surface;
     if (!s) return;

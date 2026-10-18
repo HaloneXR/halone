@@ -13,6 +13,7 @@ import dev.halone.desktop.compositor.render.DesktopCompositor
 import dev.halone.desktop.compositor.render.DesktopPanel
 import dev.halone.desktop.compositor.render.StereoRenderer
 import dev.halone.desktop.compositor.render.TestPattern
+import dev.halone.desktop.compositor.shell.DesktopShell
 import dev.halone.desktop.compositor.vk.DisplayOutput
 import dev.halone.desktop.compositor.vk.FrameLoop
 import dev.halone.desktop.compositor.vk.Output
@@ -70,6 +71,9 @@ private class Options(args: Array<String>) {
     val producerPanels = args.indices.filter { args[it] == "--panel" }.mapNotNull { args.getOrNull(it + 1) }.map { PanelSpec.parse(it) }
     val producerMarginMs = value(args, "--producer-margin")?.toFloat() ?: 10f
     val producerLog = value(args, "--producer-log") ?: "producer.log"
+
+    /** The built system apps (web/apps/system/dist); with a producer, runs the shell on them. */
+    val shellApps = value(args, "--shell")?.let(::File)
     val inputTest = "--input-test" in args
     val chromeTest = "--chrome-test" in args
     val pitch = value(args, "--pitch")?.toFloat() ?: 0f
@@ -83,8 +87,6 @@ private class Options(args: Array<String>) {
 
     private fun value(args: Array<String>, name: String) = args.indexOf(name).takeIf { it >= 0 }?.let { args.getOrNull(it + 1) }
 }
-
-private fun producerIndex(panel: DesktopPanel) = panel.id.removePrefix("producer-").takeIf { it != panel.id }?.toIntOrNull()
 
 /**
  * Drives the pointer through spike 2's test page (`site/spike/test.html`, 1280x720) the way the mouse
@@ -243,33 +245,62 @@ fun main(args: Array<String>) {
         compositor.forget(panel.texture)
         panel.texture.close()
     }
+    var frameCount = 0L
+    val shellApps = options.shellApps?.takeIf { options.producer != null }
     val host = options.producer?.let { executable ->
-        ProducerHost(vk, executable, options.producerPanels, options.producerMarginMs, File(options.producerLog)).also { host ->
+        val specs = if (shellApps != null) emptyList() else options.producerPanels
+        ProducerHost(vk, executable, specs, options.producerMarginMs, File(options.producerLog), webRoot = shellApps).also { host ->
+            host.onTextureClosed = compositor::forget
+            if (shellApps != null) return@also
+            val byProducer = HashMap<Int, DesktopPanel>()
             host.onPanelReady = { index, texture ->
                 val spec = options.producerPanels[index]
                 val panel = DesktopPanel("producer-$index", spec.width, spec.height, texture, PanelPose(distanceMetres = optics.virtualImageDistanceMetres))
                 panel.fitToFov(verticalFov, PANEL_VERTICAL_FILL)
                 panel.title = java.net.URI(spec.url).let { (it.host ?: "") + (it.path ?: "") }
                 panel.tag = "web"
+                panel.producerIndex = index
+                panel.onResizeContent = { width, height -> host.resize(index, width, height) }
+                byProducer[index] = panel
                 compositor.scene.open(panel)
                 println("producer panel $index ready: ${spec.width}x${spec.height} ${spec.url}")
             }
-            host.onPanelResized = { index, texture -> compositor.scene.find("producer-$index")?.texture = texture }
-            host.onTextureClosed = compositor::forget
-            host.onCursorChanged = { index, shape -> compositor.scene.find("producer-$index")?.cursorShape = shape }
+            host.onPanelResized = { index, texture -> byProducer[index]?.texture = texture }
+            host.onCursorChanged = { index, shape -> byProducer[index]?.cursorShape = shape }
         }
+    }
+    val desktopShell = if (host != null && shellApps != null) {
+        DesktopShell(
+            compositor, host, shellApps, verticalFov,
+            frame = { frameCount },
+            onRecenter = {
+                session?.tracker?.recenter()
+                compositor.scene.recentre()
+            },
+            version = "desktop",
+            deviceName = session?.device?.let { it.toString() } ?: "Desktop",
+            log = ::println,
+        )
+    } else {
+        null
     }
     if (host == null) repeat(3) { openPanel() }
     val chromeActions = object : ChromePress.Actions<DesktopPanel> {
-        override fun resizeContent(panel: DesktopPanel, widthPx: Int, heightPx: Int) {
-            panel.widthPx = widthPx
-            panel.heightPx = heightPx
-            producerIndex(panel)?.let { host?.resize(it, widthPx, heightPx) }
+        override fun resizeContent(panel: DesktopPanel, widthPx: Int, heightPx: Int) = panel.resizeContent(widthPx, heightPx)
+
+        override fun pin(panel: DesktopPanel, pinned: Boolean): Boolean {
+            val shell = desktopShell?.shell ?: return false
+            if (shell.windows().none { it.id == panel.id }) return false
+            shell.setPinned(panel.id, pinned)
+            return true
         }
 
         override fun back(panel: DesktopPanel) = Unit
 
-        override fun close(panel: DesktopPanel) = closePanel(panel)
+        override fun close(panel: DesktopPanel) {
+            val shell = desktopShell?.shell
+            if (shell != null && shell.windows().any { it.id == panel.id }) shell.close(panel.id) else closePanel(panel)
+        }
 
         override fun dropped(panel: DesktopPanel) =
             println("dropped '${panel.id}' at %+.0f°, slot %+.0f°".format(
@@ -384,6 +415,11 @@ fun main(args: Array<String>) {
         }
     }
 
+    fun byProducer(index: Int): DesktopPanel? = with(compositor.scene) {
+        panels.firstOrNull { it.producerIndex == index } ?: listOfNotNull(dock, launcher, popup).firstOrNull { it.producerIndex == index }
+    }
+    desktopShell?.start()
+
     var scriptStart = 0.0
     val script = ArrayDeque(if (options.chromeTest) chromeScript() else inputScript())
     val frameMs = 1000f / refreshHz
@@ -406,6 +442,7 @@ fun main(args: Array<String>) {
             paceWaitNs += System.nanoTime() - waitStart
         }
         glfwPollEvents()
+        desktopShell?.tick(System.nanoTime())
         val now = glfwGetTime()
         if (options.sweep) yaw = 50f * sin((now - start) * 0.6).toFloat()
         val drawn = loop.frame { target ->
@@ -416,7 +453,8 @@ fun main(args: Array<String>) {
             worstMs = maxOf(worstMs, dt * 1000.0)
             lastSampleNs = sampleNs
             val id = loop.lastPresentId + 1
-            host?.update(id) { index -> compositor.scene.find("producer-$index")?.let(compositor.scene::isAnimatingResize) == true }
+            frameCount = id
+            host?.update(id) { index -> byProducer(index)?.let(compositor.scene::isAnimatingResize) == true }
             sampleById[id] = sampleNs
             probe.sampled(id, sampleNs)
             val aiming = aim?.takeIf { condition.aimed && it.ready }
@@ -487,6 +525,7 @@ fun main(args: Array<String>) {
         options.reveal?.let { File(it).writeText(mapping) } ?: println("reveal: $mapping")
     }
     vkDeviceWaitIdle(vk.device)
+    desktopShell?.close()
     host?.close()
     compositor.scene.panels.filter { it.texture !is ProducerTexture }.forEach { it.texture.close() }
     compositor.close()

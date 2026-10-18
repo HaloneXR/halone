@@ -45,6 +45,9 @@ interface ProducerTransport : AutoCloseable {
     /** Arguments telling the producer how to reach this compositor. */
     val producerArguments: List<String>
 
+    /** Whether the producer can be sent messages yet. */
+    val connected: Boolean
+
     /** The next event, or null if none came within [timeoutMs]. */
     fun receive(timeoutMs: Int): ProducerEvent?
 
@@ -54,6 +57,11 @@ interface ProducerTransport : AutoCloseable {
               modifiers: Int, keyCode: Int, character: Int, unmodified: Int)
 
     fun resize(panel: Int, width: Int, height: Int)
+
+    /** A new panel on [url]; [script] runs after each load of a page on [origin]. */
+    fun open(panel: Int, width: Int, height: Int, url: String, origin: String, script: String)
+
+    fun closePanel(panel: Int)
 
     /** The compositor starts showing surface [index] of [texture]. */
     fun showing(panel: Int, texture: ProducerTexture, index: Int)

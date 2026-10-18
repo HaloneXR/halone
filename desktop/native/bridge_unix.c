@@ -201,6 +201,33 @@ int32_t halone_send_release(int32_t connection, uint32_t panel, uint32_t index, 
     return send_packet(connection, &r, sizeof r);
 }
 
+static void copy_text(char *to, size_t size, const char *from) {
+    if (!from || size == 0) return;
+    strncpy(to, from, size - 1);
+    to[size - 1] = 0;
+}
+
+int32_t halone_send_open(int32_t connection, uint32_t panel, uint32_t width, uint32_t height, const char *url,
+                         const char *origin, const char *script) {
+    spike_open o;
+    memset(&o, 0, sizeof o);
+    o.id = SPIKE_MSG_OPEN;
+    o.panel = panel;
+    o.width = width;
+    o.height = height;
+    copy_text(o.url, sizeof o.url, url);
+    copy_text(o.origin, sizeof o.origin, origin);
+    copy_text(o.script, sizeof o.script, script);
+    return send_packet(connection, &o, sizeof o);
+}
+
+int32_t halone_send_close(int32_t connection, uint32_t panel) {
+    spike_close c = {0};
+    c.id = SPIKE_MSG_CLOSE;
+    c.panel = panel;
+    return send_packet(connection, &c, sizeof c);
+}
+
 void halone_close(int32_t fd) {
     if (fd >= 0) close(fd);
 }

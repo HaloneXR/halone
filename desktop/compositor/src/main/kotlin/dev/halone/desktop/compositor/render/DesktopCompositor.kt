@@ -12,7 +12,9 @@ import dev.halone.compositor.PanelSceneHit
 import dev.halone.compositor.ResizeDrag
 import dev.halone.compositor.ResizeHandles
 import dev.halone.compositor.ScenePanel
+import dev.halone.compositor.StereoRegion
 import dev.halone.compositor.TitleBar
+import dev.halone.compositor.WindowPanel
 import dev.halone.desktop.compositor.math.Mat4
 import dev.halone.desktop.compositor.vk.FrameTarget
 import dev.halone.desktop.compositor.vk.TextureSource
@@ -37,10 +39,23 @@ class DesktopPanel(
     override var heightPx: Int,
     var texture: TextureSource,
     pose: PanelPose = PanelPose(),
-) : ScenePanel(id, pose) {
+) : ScenePanel(id, pose), WindowPanel {
     var cornerRadiusPx: Float = 24f
-    var title: String = id
-    var tag: String? = null
+    override var title: String = id
+    override var tag: String? = null
+    override var stereoRegion: StereoRegion? = null
+
+    /** The producer's number for this panel, when a producer draws it. */
+    var producerIndex: Int? = null
+
+    /** Asks whatever draws the content to lay it out at a new size. */
+    var onResizeContent: ((widthPx: Int, heightPx: Int) -> Unit)? = null
+
+    override fun resizeContent(widthPx: Int, heightPx: Int) {
+        this.widthPx = widthPx
+        this.heightPx = heightPx
+        onResizeContent?.invoke(widthPx, heightPx)
+    }
 
     /** The shape the content under the pointer asks the arrow to take. */
     var cursorShape: CursorShape = CursorShape.DEFAULT
@@ -133,16 +148,27 @@ class DesktopCompositor(private val vk: VulkanContext, colorFormat: Int, val ver
         val showChrome = windows > 0f
         for (panel in scene.drawOrder()) {
             if (showChrome) drawFrame(cmd, panel, viewProjection, panel === focused, panel === grabbed, windows)
-            if (!panel.texture.ready) continue
-            panels.bind(cmd)
-            panels.draw(cmd, panel.texture, Mat4.multiply(viewProjection, panelModel(panel, panel.widthPx.toFloat(), panel.heightPx.toFloat())),
-                panel.widthPx.toFloat(), panel.heightPx.toFloat(), panel.cornerRadiusPx, windows)
+            if (!drawContent(cmd, panel, viewProjection, windows)) continue
             if (showChrome) drawTitleBar(cmd, panel, viewProjection, panel === focused || panel === grabbed, windows)
             if (showChrome && windows >= 1f) drawResizeHandle(cmd, panel, viewProjection)
         }
         scene.resizing?.let { drawResizePreview(cmd, it, viewProjection) }
+        scene.dock?.let { drawContent(cmd, it, viewProjection, scene.dockOpacity) }
+        scene.launcher?.let { drawContent(cmd, it, viewProjection, scene.launcherOpacity) }
+        scene.popup?.let { drawContent(cmd, it, viewProjection, if (scene.popupShown) 1f else 0f) }
         drawCursor(cmd, viewProjection)
         notice?.let { drawNotice(cmd, it, viewProjection) }
+    }
+
+    /** Draws a panel's page; false if it has nothing to show yet. */
+    private fun drawContent(cmd: VkCommandBuffer, panel: DesktopPanel, vp: FloatArray, alpha: Float): Boolean {
+        if (!panel.texture.ready) return false
+        if (alpha <= 0f) return true
+        val width = panel.widthPx.toFloat()
+        val height = panel.heightPx.toFloat()
+        panels.bind(cmd)
+        panels.draw(cmd, panel.texture, Mat4.multiply(vp, panelModel(panel, width, height)), width, height, panel.cornerRadiusPx, alpha)
+        return true
     }
 
     /** Rotated to [panel]'s heading and elevation, then moved [x], [y] across it and [distance] out. */

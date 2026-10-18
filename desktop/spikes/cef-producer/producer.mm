@@ -4,6 +4,7 @@
 #include <mach/mach_time.h>
 #include <servers/bootstrap.h>
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -12,6 +13,11 @@
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
 #include "include/cef_command_line.h"
+#include "include/cef_parser.h"
+#include "include/cef_request_context.h"
+#include "include/cef_scheme.h"
+#include "include/cef_stream.h"
+#include "include/wrapper/cef_stream_resource_handler.h"
 #include "include/wrapper/cef_library_loader.h"
 #include "producer_common.h"
 
@@ -61,11 +67,36 @@ struct Panel {
     uint32_t paints = 0;
     uint32_t busy = 0;
     bool resizing = false;
+    std::string origin;
+    std::string script;
+    bool closing = false;
     producer::Window beginToPaint;
     producer::Window blit;
 };
 
-std::vector<Panel *> gPanels;
+std::map<uint32_t, Panel *> gPanels;
+bool gContextReady = false;
+std::string gWebRoot;
+
+Panel *findPanel(uint32_t number) {
+    auto it = gPanels.find(number);
+    return it == gPanels.end() || it->second->closing ? nullptr : it->second;
+}
+
+std::vector<Panel *> livePanels() {
+    std::vector<Panel *> live;
+    for (auto &entry : gPanels)
+        if (!entry.second->closing) live.push_back(entry.second);
+    return live;
+}
+
+void releaseSurfaces(Panel *p) {
+    for (uint32_t i = 0; i < SPIKE_MAX_SURFACES; i++) {
+        p->textures[i] = nil;
+        if (p->surfaces[i]) CFRelease(p->surfaces[i]);
+        p->surfaces[i] = nullptr;
+    }
+}
 
 void sendOrQuit(mach_msg_header_t *header, mach_msg_size_t size) {
     kern_return_t kr = mach_msg(header, MACH_SEND_MSG | MACH_SEND_TIMEOUT, size, 0, MACH_PORT_NULL, 0, MACH_PORT_NULL);
@@ -76,7 +107,7 @@ void sendHello(Panel *p) {
     spike_hello hello = {};
     for (uint32_t i = 0; i < SPIKE_MAX_SURFACES; i++) {
         hello.surfaces[i].type = MACH_MSG_PORT_DESCRIPTOR;
-        if (i < gSurfaceCount) {
+        if (p && i < gSurfaceCount) {
             hello.surfaces[i].name = IOSurfaceCreateMachPort(p->surfaces[i]);
             hello.surfaces[i].disposition = MACH_MSG_TYPE_MOVE_SEND;
         } else {
@@ -90,10 +121,10 @@ void sendHello(Panel *p) {
     hello.header.msgh_local_port = gInbox;
     hello.header.msgh_id = SPIKE_MSG_HELLO;
     hello.body.msgh_descriptor_count = SPIKE_MAX_SURFACES;
-    hello.panel = p->number;
-    hello.count = gSurfaceCount;
-    hello.width = (uint32_t)p->width;
-    hello.height = (uint32_t)p->height;
+    hello.panel = p ? p->number : SPIKE_NO_PANEL;
+    hello.count = p ? gSurfaceCount : 0;
+    hello.width = p ? (uint32_t)p->width : 0;
+    hello.height = p ? (uint32_t)p->height : 0;
     kern_return_t kr = mach_msg(&hello.header, MACH_SEND_MSG, sizeof hello, 0, MACH_PORT_NULL, MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
     if (kr != KERN_SUCCESS) {
         fprintf(stderr, "producer: hello failed: %s\n", mach_error_string(kr));
@@ -201,13 +232,14 @@ void sendCursor(Panel *p, const char *name) {
     sendOrQuit(&c.header, sizeof c);
 }
 
-class PanelClient : public CefClient, public CefRenderHandler, public CefLifeSpanHandler, public CefDisplayHandler {
+class PanelClient : public CefClient, public CefRenderHandler, public CefLifeSpanHandler, public CefDisplayHandler, public CefLoadHandler {
 public:
     explicit PanelClient(Panel *panel) : panel_(panel) {}
 
     CefRefPtr<CefRenderHandler> GetRenderHandler() override { return this; }
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
     CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
+    CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
 
     void GetViewRect(CefRefPtr<CefBrowser>, CefRect &rect) override { rect = CefRect(0, 0, panel_->width, panel_->height); }
 
@@ -222,7 +254,28 @@ public:
         if (type == PET_VIEW) deliver(panel_, info);
     }
 
-    void OnAfterCreated(CefRefPtr<CefBrowser> browser) override { panel_->browser = browser; }
+    void OnAfterCreated(CefRefPtr<CefBrowser> browser) override {
+        panel_->browser = browser;
+        if (panel_->closing) browser->GetHost()->CloseBrowser(true);
+    }
+
+    void OnBeforeClose(CefRefPtr<CefBrowser>) override {
+        panel_->browser = nullptr;
+        if (!panel_->closing) return;
+        gPanels.erase(panel_->number);
+        releaseSurfaces(panel_);
+        delete panel_;
+        panel_ = nullptr;
+    }
+
+    // As on Android, the bridge goes only to pages on the window's own origin, after each load.
+    void OnLoadEnd(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, int) override {
+        if (!panel_ || !frame->IsMain() || panel_->script.empty() || panel_->origin.empty()) return;
+        std::string url = frame->GetURL().ToString();
+        const std::string &origin = panel_->origin;
+        if (url != origin && url.compare(0, origin.size() + 1, origin + "/") != 0) return;
+        frame->ExecuteJavaScript(panel_->script, url, 0);
+    }
 
     bool OnCursorChange(CefRefPtr<CefBrowser>, CefCursorHandle, cef_cursor_type_t type, const CefCursorInfo &) override {
         const char *name = producer::cssCursor(type);
@@ -245,6 +298,47 @@ private:
     IMPLEMENT_REFCOUNTING(PanelClient);
 };
 
+void createBrowser(Panel *p) {
+    // The bridge is a WebSocket to the compositor on 127.0.0.1, which Local
+    // Network Access blocks without asking in a windowless browser. Only the
+    // origin the bridge was given to may reach it.
+    if (!p->script.empty() && !p->origin.empty())
+        CefRequestContext::GetGlobalContext()->SetContentSetting(p->origin, p->origin, CEF_CONTENT_SETTING_TYPE_LOOPBACK_NETWORK,
+                                                                 CEF_CONTENT_SETTING_VALUE_ALLOW);
+    CefWindowInfo info;
+    info.SetAsWindowless(nullptr);
+    info.shared_texture_enabled = true;
+    info.external_begin_frame_enabled = true;
+    CefBrowserSettings settings;
+    settings.windowless_frame_rate = 60;
+    CefBrowserHost::CreateBrowser(info, new PanelClient(p), p->url, settings, nullptr, nullptr);
+}
+
+// Serves https://halone.local/ from --halone-web-root, as WebViewAssetLoader serves the APK's assets on Android.
+class WebRootHandlerFactory : public CefSchemeHandlerFactory {
+public:
+    CefRefPtr<CefResourceHandler> Create(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, const CefString &,
+                                         CefRefPtr<CefRequest> request) override {
+        CefURLParts parts;
+        if (!CefParseURL(request->GetURL(), parts)) return nullptr;
+        std::string path = CefURIDecode(CefString(&parts.path), false, UU_SPACES).ToString();
+        if (path.empty() || path.back() == '/') path += "index.html";
+        if (path.find("..") != std::string::npos) return nullptr;
+        CefRefPtr<CefStreamReader> stream = CefStreamReader::CreateForFile(gWebRoot + path);
+        if (!stream) {
+            static const char notFound[] = "Not Found";
+            return new CefStreamResourceHandler(404, "Not Found", "text/plain", {},
+                                                CefStreamReader::CreateForData((void *)notFound, sizeof notFound - 1));
+        }
+        size_t dot = path.rfind('.');
+        std::string mime = dot == std::string::npos ? "" : CefGetMimeType(path.substr(dot + 1)).ToString();
+        return new CefStreamResourceHandler(mime.empty() ? "application/octet-stream" : mime, stream);
+    }
+
+private:
+    IMPLEMENT_REFCOUNTING(WebRootHandlerFactory);
+};
+
 class SpikeApp : public CefApp, public CefBrowserProcessHandler {
 public:
     CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
@@ -258,15 +352,9 @@ public:
     }
 
     void OnContextInitialized() override {
-        for (Panel *p : gPanels) {
-            CefWindowInfo info;
-            info.SetAsWindowless(nullptr);
-            info.shared_texture_enabled = true;
-            info.external_begin_frame_enabled = true;
-            CefBrowserSettings settings;
-            settings.windowless_frame_rate = 60;
-            CefBrowserHost::CreateBrowser(info, new PanelClient(p), p->url, settings, nullptr, nullptr);
-        }
+        if (!gWebRoot.empty()) CefRegisterSchemeHandlerFactory("https", "halone.local", new WebRootHandlerFactory);
+        gContextReady = true;
+        for (Panel *p : livePanels()) createBrowser(p);
     }
 
 private:
@@ -274,13 +362,13 @@ private:
 };
 
 void focus(Panel *target) {
-    for (Panel *p : gPanels)
+    for (Panel *p : livePanels())
         if (p->browser) p->browser->GetHost()->SetFocus(p == target);
 }
 
 void handleInput(const spike_input &in) {
-    if (in.panel >= gPanels.size()) return;
-    Panel *p = gPanels[in.panel];
+    Panel *p = findPanel(in.panel);
+    if (!p) return;
     if (!p->browser) return;
     if (in.kind == SPIKE_INPUT_DOWN) focus(p);
     producer::dispatchInput(p->browser->GetHost(), in, [](const spike_input &key, CefKeyEvent &event) {
@@ -292,14 +380,10 @@ void handleInput(const spike_input &in) {
 }
 
 void handleResize(const spike_resize &r) {
-    if (r.panel >= gPanels.size() || r.width == 0 || r.height == 0) return;
-    Panel *p = gPanels[r.panel];
+    Panel *p = findPanel(r.panel);
+    if (!p || r.width == 0 || r.height == 0) return;
     if ((int)r.width == p->width && (int)r.height == p->height) return;
-    for (uint32_t i = 0; i < gSurfaceCount; i++) {
-        p->textures[i] = nil;
-        if (p->surfaces[i]) CFRelease(p->surfaces[i]);
-        p->surfaces[i] = nullptr;
-    }
+    releaseSurfaces(p);
     p->width = (int)r.width;
     p->height = (int)r.height;
     p->next = 0;
@@ -310,9 +394,31 @@ void handleResize(const spike_resize &r) {
     if (p->browser) p->browser->GetHost()->WasResized();
 }
 
+void handleOpen(const spike_open &o) {
+    if (gPanels.count(o.panel) || o.width == 0 || o.height == 0) return;
+    Panel *p = new Panel;
+    p->number = o.panel;
+    p->width = (int)o.width;
+    p->height = (int)o.height;
+    p->url = std::string(o.url, strnlen(o.url, sizeof o.url));
+    p->origin = std::string(o.origin, strnlen(o.origin, sizeof o.origin));
+    p->script = std::string(o.script, strnlen(o.script, sizeof o.script));
+    gPanels[p->number] = p;
+    allocateSurfaces(p);
+    sendHello(p);
+    if (gContextReady) createBrowser(p);
+}
+
+void handleClose(const spike_close &c) {
+    Panel *p = findPanel(c.panel);
+    if (!p) return;
+    p->closing = true;
+    if (p->browser) p->browser->GetHost()->CloseBrowser(true);
+}
+
 void beginFrame() {
     uint64_t now = mach_absolute_time();
-    for (Panel *p : gPanels) {
+    for (Panel *p : livePanels()) {
         if (!p->browser) continue;
         p->begun = now;
         p->browser->GetHost()->SendExternalBeginFrame();
@@ -345,13 +451,17 @@ void drainInbox() {
             handleInput(in.input.msg);
         } else if (in.header.msgh_id == SPIKE_MSG_RESIZE) {
             handleResize(in.resize.msg);
+        } else if (in.header.msgh_id == SPIKE_MSG_OPEN) {
+            handleOpen(in.open.msg);
+        } else if (in.header.msgh_id == SPIKE_MSG_CLOSE) {
+            handleClose(in.close.msg);
         }
     }
     if (ticked) handleTick(latestTick);
 }
 
 void report() {
-    for (Panel *p : gPanels) {
+    for (Panel *p : livePanels()) {
         fprintf(stderr, "producer: panel %u %u paints, begin->paint p50 %.2f p95 %.2f ms, blit p50 %.2f p95 %.2f ms, %u busy\n",
                 p->number, p->paints, p->beginToPaint.percentile(0.5), p->beginToPaint.percentile(0.95),
                 p->blit.percentile(0.5), p->blit.percentile(0.95), p->busy);
@@ -363,6 +473,7 @@ void report() {
 
 bool parsePanels(const std::string &spec) {
     std::vector<producer::PanelSpec> specs;
+    if (spec.empty()) return true;
     if (!producer::parsePanels(spec, specs)) return false;
     for (const producer::PanelSpec &s : specs) {
         Panel *p = new Panel;
@@ -370,7 +481,7 @@ bool parsePanels(const std::string &spec) {
         p->width = s.width;
         p->height = s.height;
         p->url = s.url;
-        gPanels.push_back(p);
+        gPanels[p->number] = p;
     }
     return true;
 }
@@ -390,7 +501,7 @@ int main(int argc, char *argv[]) {
         commandLine->InitFromArgv(argc, argv);
         std::string service = commandLine->GetSwitchValue("spike-service").ToString();
         if (service.empty() || !parsePanels(commandLine->GetSwitchValue("spike-panels").ToString())) {
-            fprintf(stderr, "usage: producer --spike-service=<name> --spike-panels=WxH@url[,WxH@url...] [--spike-margin=ms] [--spike-surfaces=n]\n");
+            fprintf(stderr, "usage: producer --spike-service=<name> [--spike-panels=WxH@url[,WxH@url...]] [--spike-margin=ms] [--spike-surfaces=n] [--halone-web-root=dir]\n");
             return 2;
         }
         if (commandLine->HasSwitch("spike-margin")) gMarginMs = std::stod(commandLine->GetSwitchValue("spike-margin").ToString());
@@ -406,7 +517,10 @@ int main(int argc, char *argv[]) {
 
         gDevice = MTLCreateSystemDefaultDevice();
         gQueue = [gDevice newCommandQueue];
-        for (Panel *p : gPanels) {
+        gWebRoot = commandLine->GetSwitchValue("halone-web-root").ToString();
+        while (!gWebRoot.empty() && gWebRoot.back() == '/') gWebRoot.pop_back();
+        sendHello(nullptr);
+        for (Panel *p : livePanels()) {
             allocateSurfaces(p);
             sendHello(p);
         }
@@ -440,7 +554,7 @@ int main(int argc, char *argv[]) {
         dispatch_resume(term);
 
         CefRunMessageLoop();
-        for (Panel *p : gPanels) p->browser = nullptr;
+        for (Panel *p : livePanels()) p->browser = nullptr;
         CefShutdown();
     }
     return 0;

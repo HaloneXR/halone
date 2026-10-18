@@ -72,6 +72,8 @@ interface UnixBridge : Library {
     ): Int
     fun halone_send_resize(connection: Int, panel: Int, width: Int, height: Int): Int
     fun halone_send_release(connection: Int, panel: Int, index: Int, generation: Int): Int
+    fun halone_send_open(connection: Int, panel: Int, width: Int, height: Int, url: String, origin: String, script: String): Int
+    fun halone_send_close(connection: Int, panel: Int): Int
     fun halone_close(fd: Int)
 
     companion object {
@@ -93,6 +95,8 @@ class UnixTransport : ProducerTransport {
     private val event = UnixBridgeEvent()
 
     override val producerArguments = listOf("--spike-socket=$path")
+
+    override val connected get() = connection >= 0
 
     override fun receive(timeoutMs: Int): ProducerEvent? {
         if (connection < 0) {
@@ -130,6 +134,14 @@ class UnixTransport : ProducerTransport {
 
     override fun resize(panel: Int, width: Int, height: Int) {
         if (connection >= 0) bridge.halone_send_resize(connection, panel, width, height)
+    }
+
+    override fun open(panel: Int, width: Int, height: Int, url: String, origin: String, script: String) {
+        if (connection >= 0) bridge.halone_send_open(connection, panel, width, height, url, origin, script)
+    }
+
+    override fun closePanel(panel: Int) {
+        if (connection >= 0) bridge.halone_send_close(connection, panel)
     }
 
     override fun showing(panel: Int, texture: ProducerTexture, index: Int) {}

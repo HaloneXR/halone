@@ -95,7 +95,7 @@ class InputRouter(
 
     private fun hover(modifiers: Int) {
         val hit = scene.hitTest(direction)?.takeIf { it.part == HitPart.CONTENT }
-        val index = hit?.panel?.producerIndex()
+        val index = hit?.panel?.producerIndex
         hovered?.takeIf { it != index }?.let { host?.input(it, ProducerHost.INPUT_LEAVE, 0f, 0f) }
         hovered = index
         if (hit != null && index != null) {
@@ -119,7 +119,7 @@ class InputRouter(
         }
         if (hit == null || hit.part != HitPart.CONTENT) return
         val host = host ?: return
-        val index = hit.panel.producerIndex() ?: return
+        val index = hit.panel.producerIndex ?: return
         val mask = 1 shl button
         if (pressed) {
             clicks = if (button == lastClickButton && now - lastClickAt < DOUBLE_CLICK_SECONDS) clicks + 1 else 1
@@ -136,7 +136,7 @@ class InputRouter(
 
     fun scroll(dx: Double, dy: Double, modifiers: Int) {
         val hit = scene.hitTest(direction)?.takeIf { it.part == HitPart.CONTENT } ?: return
-        val index = hit.panel.producerIndex() ?: return
+        val index = hit.panel.producerIndex ?: return
         val host = host ?: return
         host.input(index, ProducerHost.INPUT_WHEEL, hit.hit.x, hit.hit.y,
             dx = (dx * WHEEL_PIXELS).toFloat(), dy = (dy * WHEEL_PIXELS).toFloat(), modifiers = macFlags(modifiers))
@@ -178,7 +178,6 @@ class InputRouter(
             keyCode = keyCode, character = codepoint, unmodified = codepoint)
     }
 
-    private fun DesktopPanel.producerIndex(): Int? = id.removePrefix("producer-").takeIf { it != id }?.toIntOrNull()
 
     private companion object {
         const val DEFAULT_MOUSE_SPEED = 0.04

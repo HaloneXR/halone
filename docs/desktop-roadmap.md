@@ -247,6 +247,25 @@ settings and shortcuts. The simulator's dev server is a reference for several.
   onto the glasses' display while Halone owns it.
 - Exit: the launcher, settings, files and a third-party app from
   halone-examples run unmodified; `halone dev` targets the desktop shell.
+- **In progress (2026-10-18).** `core-shell` is plain JVM (see Changes to
+  main), and `desktop/compositor/run-shell.sh` runs it:
+  - `DesktopShell` is the desktop `ShellPlatform`, as `ShellSession` is on
+    Android. The producer opens and closes panels at runtime (OPEN and CLOSE
+    messages), and the dock, launcher and menu are drawn as Android draws
+    them.
+  - The system apps are served as `https://halone.local/` from
+    `web/apps/system/dist` by a CEF scheme handler (`--halone-web-root`).
+  - The bridge: the producer runs a small script after each load of a page
+    on the window's origin. The script makes the `MessageChannel` the SDK
+    expects and relays it over a WebSocket to `BridgeSockets` on 127.0.0.1,
+    under a per-window path. Chromium's Local Network Access blocks that
+    socket in a windowless browser without asking, so the producer allows
+    loopback for the bridged origin only.
+  - Working on macOS: the dock, launcher and menu connect, and launching
+    Settings from the launcher opens it as a window with its bridge.
+  - Left: files, sockets and media backends; shortcuts; web windows' browser
+    chrome; Halone package apps and their origins; `halone dev`; the Linux
+    producer's OPEN, CLOSE, web root and script.
 
 ### 6. Plugin contract
 
