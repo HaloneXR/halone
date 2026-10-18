@@ -30,18 +30,12 @@ class TimingProbe(private val clock: DisplayClock?) {
     private val phases = ArrayList<Double>()
     private var presented = 0
     private var unreported = 0
-    private var rawShown = false
 
     fun record(r: PresentRecord) {
         presented++
         if (r.actualNs <= 0) {
             unreported++
             return
-        }
-        if (!rawShown) {
-            rawShown = true
-            println("timing: raw submitted %d actual %d earliest %d margin %d, nanoTime now %d".format(
-                r.submittedNs, r.actualNs, r.earliestNs, r.marginNs, System.nanoTime()))
         }
         latencies += (r.actualNs - r.submittedNs) / 1e6
         sampled.remove(r.id)?.let { poseToPresent += (r.actualNs - it) / 1e6 }

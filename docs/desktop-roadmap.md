@@ -66,7 +66,7 @@ web apps are sandboxed, native plugins are trusted and installed deliberately.
 ## Phases
 
 Each phase ends with something that can be run and a decision about whether to
-continue. Phases 1 and 2 are spikes: throwaway code, measured results.
+continue. Phases 1 and 2 are spikes: experimental code, measured results.
 
 ### 1. Spike: shared textures across processes (macOS)
 

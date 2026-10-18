@@ -1,6 +1,6 @@
 # Spike 1: shared textures across processes (macOS)
 
-Phase 1 of the [desktop roadmap](../../../docs/desktop-roadmap.md). Throwaway
+Phase 1 of the [desktop roadmap](../../../docs/desktop-roadmap.md). Experimental
 code: it answers whether "every panel is a texture produced in another process"
 holds on macOS, and what it costs.
 

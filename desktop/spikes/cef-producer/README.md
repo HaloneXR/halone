@@ -1,6 +1,6 @@
 # Spike 2: CEF as a producer (macOS)
 
-Phase 2 of the [desktop roadmap](../../../docs/desktop-roadmap.md). Throwaway
+Phase 2 of the [desktop roadmap](../../../docs/desktop-roadmap.md). Experimental
 code. It answers two questions: can CEF feed panels through spike 1's
 shared-texture path while holding the frame budget, and which host stack does
 that point to?
