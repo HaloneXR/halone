@@ -27,4 +27,23 @@ run = "./gradlew :app:assembleDebug"
 
 [tasks."glasses:test"]
 description = "Run device driver and tracking unit tests"
-run = "./gradlew :core-glasses:testDebugUnitTest"
+run = "./gradlew :core-glasses:test"
+
+[tasks."desktop:build"]
+description = "Build the desktop compositor and glasses tool, without the Android modules"
+run = "./gradlew -Phalone.desktopOnly :desktop-glasses:installDist :desktop-compositor:installDist"
+
+[tasks.desktop]
+description = "Run the desktop version in a window; extra arguments go to it"
+depends = ["desktop:build"]
+run = "desktop/compositor/build/install/halone-desktop/bin/halone-desktop"
+
+[tasks."desktop:glasses"]
+description = "Run the desktop version on attached glasses; extra arguments go to it"
+depends = ["desktop:build"]
+run = "desktop/compositor/build/install/halone-desktop/bin/halone-desktop --glasses"
+
+[tasks."glasses:probe"]
+description = "List HID devices, or track attached glasses: mise run glasses:probe track 30"
+depends = ["desktop:build"]
+run = "desktop/glasses/build/install/glasses-probe/bin/glasses-probe"
