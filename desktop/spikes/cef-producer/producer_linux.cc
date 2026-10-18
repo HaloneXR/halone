@@ -479,6 +479,7 @@ struct Panel {
     uint32_t busy = 0;
     bool resizing = false;
     std::string origin;
+    std::string root;
     std::string script;
     bool closing = false;
     producer::Window beginToPaint;
@@ -654,6 +655,7 @@ private:
 };
 
 void createBrowser(Panel *p) {
+    producer::serveOrigin(p->origin, p->root);
     producer::allowBridge(p->origin, p->script);
     CefWindowInfo info;
     info.SetAsWindowless(0);
@@ -758,6 +760,7 @@ void handleOpen(const spike_open &o) {
     p->height = (int)o.height;
     p->url = producer::text(o.url, sizeof o.url);
     p->origin = producer::text(o.origin, sizeof o.origin);
+    p->root = producer::text(o.root, sizeof o.root);
     p->script = producer::text(o.script, sizeof o.script);
     gPanels[p->number] = p;
     allocateSurfaces(p);
