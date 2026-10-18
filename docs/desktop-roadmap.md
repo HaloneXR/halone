@@ -100,7 +100,8 @@ sudo tools/glasses-lease-edid.py reset     # back to a desktop monitor
 ```
 
 Producer panels (`--producer`, see `desktop/compositor/run-with-producer.sh`)
-are macOS-only for now: they need IOSurfaces and Mach ports.
+run on macOS (IOSurfaces over Mach ports) and Linux (DMA-BUFs over a Unix
+socket); building the producer is described in `desktop/spikes/cef-producer`.
 
 ## Phases
 
@@ -314,6 +315,11 @@ shared textures, over the phase 6 contract.
     timing for the leased display, so it swaps an empty OpenGL ES buffer.
   - KWin keeps the connector on offer through the glasses' switch to 3D, so
     the lease is taken after the switch.
+  - Producer panels: CEF's DMA-BUF paints are copied into the producer's own
+    ring of exported DMA-BUFs (single-plane modifiers), which the compositor
+    imports with VK_EXT_image_drm_format_modifier. The same messages travel
+    over a Unix socket, with a RELEASE message where macOS has IOSurface use
+    counts. Three panels including 1080p60 VP9 hold 60 fps.
 
 ### 9. Platform plugins
 
