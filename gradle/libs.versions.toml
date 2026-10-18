@@ -17,6 +17,7 @@ geckoview = "154.0.20260814215756"
 haloneSdk = "0.1.0"
 hid4java = "0.8.0"
 jna = "5.19.1"
+lwjgl = "3.4.3"
 
 [libraries]
 halone-plugin-sdk = { group = "dev.halone", name = "plugin-sdk", version.ref = "haloneSdk" }
@@ -33,6 +34,10 @@ junit = { group = "junit", name = "junit", version.ref = "junit" }
 json = { group = "org.json", name = "json", version.ref = "json" }
 hid4java = { group = "org.hid4java", name = "hid4java", version.ref = "hid4java" }
 jna = { group = "net.java.dev.jna", name = "jna", version.ref = "jna" }
+lwjgl = { group = "org.lwjgl", name = "lwjgl", version.ref = "lwjgl" }
+lwjgl-glfw = { group = "org.lwjgl", name = "lwjgl-glfw", version.ref = "lwjgl" }
+lwjgl-vulkan = { group = "org.lwjgl", name = "lwjgl-vulkan", version.ref = "lwjgl" }
+lwjgl-shaderc = { group = "org.lwjgl", name = "lwjgl-shaderc", version.ref = "lwjgl" }
 androidx-test-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxTestJunit" }
 androidx-test-runner = { group = "androidx.test", name = "runner", version.ref = "androidxTestRunner" }
 androidx-test-espresso = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espresso" }

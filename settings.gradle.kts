@@ -44,3 +44,5 @@ listOf(
 
 include(":desktop-glasses")
 project(":desktop-glasses").projectDir = file("desktop/glasses")
+include(":desktop-compositor")
+project(":desktop-compositor").projectDir = file("desktop/compositor")
