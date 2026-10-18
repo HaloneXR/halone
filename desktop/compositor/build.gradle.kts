@@ -57,9 +57,10 @@ val haloneVersion = ((findProperty("halone.date") as String?)
     ?: LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy.MM.dd"))) + "-alpha"
 val writeVersion = tasks.register("writeVersion") {
     val output = layout.buildDirectory.file("generated/version/halone-version.txt")
-    inputs.property("version", haloneVersion)
+    val version = haloneVersion
+    inputs.property("version", version)
     outputs.file(output)
-    doLast { output.get().asFile.apply { parentFile.mkdirs() }.writeText(haloneVersion) }
+    doLast { output.get().asFile.apply { parentFile.mkdirs() }.writeText(version) }
 }
 sourceSets.main {
     resources.srcDir(layout.buildDirectory.dir("native"))
