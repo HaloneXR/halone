@@ -34,7 +34,6 @@ import kotlin.system.exitProcess
 private const val PANEL_VERTICAL_FILL = 0.75f
 private const val MOUSE_DEGREES_PER_PIXEL = 0.08f
 private const val PACE_TIMEOUT_NS = 100_000_000L
-private const val CURSOR_PX = 128
 
 /** How frames are paced, aimed and warped. */
 private data class Condition(
@@ -257,6 +256,7 @@ fun main(args: Array<String>) {
             }
             host.onPanelResized = { index, texture -> compositor.scene.find("producer-$index")?.texture = texture }
             host.onTextureClosed = compositor::forget
+            host.onCursorChanged = { index, shape -> compositor.scene.find("producer-$index")?.cursorShape = shape }
         }
     }
     if (host == null) repeat(3) { openPanel() }
@@ -320,7 +320,6 @@ fun main(args: Array<String>) {
     val router = if (host != null || session != null) InputRouter(host, compositor.scene, chromeActions) else null
     var routerPlaced = false
     if (router != null) {
-        compositor.cursorTexture = StaticTexture(vk, CURSOR_PX, CURSOR_PX, TestPattern.cursor(CURSOR_PX))
         captured = true
         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED)
         if (glfwRawMouseMotionSupported()) glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE)
@@ -387,7 +386,6 @@ fun main(args: Array<String>) {
 
     var scriptStart = 0.0
     val script = ArrayDeque(if (options.chromeTest) chromeScript() else inputScript())
-
     val frameMs = 1000f / refreshHz
     val start = glfwGetTime()
     var lastSampleNs = System.nanoTime()
@@ -491,7 +489,6 @@ fun main(args: Array<String>) {
     vkDeviceWaitIdle(vk.device)
     host?.close()
     compositor.scene.panels.filter { it.texture !is ProducerTexture }.forEach { it.texture.close() }
-    compositor.cursorTexture?.close()
     compositor.close()
     loop.close()
     vk.close()

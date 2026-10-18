@@ -1,6 +1,11 @@
 package dev.halone.desktop.compositor.render
 
 import dev.halone.compositor.ChromeLayout
+import dev.halone.compositor.CursorShape
+import dev.halone.compositor.CursorStyle
+import dev.halone.compositor.HitPart
+import dev.halone.compositor.Notice
+import dev.halone.compositor.NoticeLayout
 import dev.halone.compositor.PanelPose
 import dev.halone.compositor.PanelScene
 import dev.halone.compositor.PanelSceneHit
@@ -36,6 +41,9 @@ class DesktopPanel(
     var cornerRadiusPx: Float = 24f
     var title: String = id
     var tag: String? = null
+
+    /** The shape the content under the pointer asks the arrow to take. */
+    var cursorShape: CursorShape = CursorShape.DEFAULT
 }
 
 /**
@@ -46,7 +54,9 @@ class DesktopPanel(
  */
 class DesktopCompositor(private val vk: VulkanContext, colorFormat: Int, val verticalFovDegrees: Float) : AutoCloseable {
     var stereo: StereoRenderer? = null
-    var cursorTexture: TextureSource? = null
+
+    /** How the pointer is drawn; a mouse gets the arrow. */
+    var cursorStyle = CursorStyle.ARROW
 
     /** Where the pointer aims, set by the input every frame; null hides the cursor. */
     var pointerDirection: Vec3? = null
@@ -57,11 +67,17 @@ class DesktopCompositor(private val vk: VulkanContext, colorFormat: Int, val ver
     var headYawRadians = 0f
         private set
 
+    /** Held in front of the wearer over everything else while set. */
+    var notice: Notice? = null
+
     val scene = PanelScene<DesktopPanel>()
     private val panels = PanelPipeline(vk, colorFormat)
     private val chrome = ChromePipeline(vk, colorFormat)
     private val titleBars = TitleBarPainter(vk)
+    private val notices = NoticePainter(vk)
+    private val cursors = CursorTextures(vk)
     private val viewProjection = FloatArray(16)
+    private var headRotation = Mat4.identity()
     private var frame = 0L
 
     fun advance(head: Quaternion, dt: Float) {
@@ -76,9 +92,11 @@ class DesktopCompositor(private val vk: VulkanContext, colorFormat: Int, val ver
         scene.advanceFollow(headYawRadians, dt)
         lastHit = pointerDirection?.let { scene.hitTest(it) }
         titleBars.keepOnly(scene.panels.mapTo(HashSet()) { it.id }, frame, ::forget)
+        notices.release(frame, ::forget)
     }
 
     fun record(target: FrameTarget, head: Quaternion, warpPoses: (() -> Pair<Quaternion, Quaternion>)? = null) {
+        headRotation = Mat4.rotation(head)
         val stereo = stereo
         if (stereo != null) stereo.record(target, head, ::drawScene, warpPoses) else recordMono(target, head)
     }
@@ -124,6 +142,7 @@ class DesktopCompositor(private val vk: VulkanContext, colorFormat: Int, val ver
         }
         scene.resizing?.let { drawResizePreview(cmd, it, viewProjection) }
         drawCursor(cmd, viewProjection)
+        notice?.let { drawNotice(cmd, it, viewProjection) }
     }
 
     /** Rotated to [panel]'s heading and elevation, then moved [x], [y] across it and [distance] out. */
@@ -202,7 +221,6 @@ class DesktopCompositor(private val vk: VulkanContext, colorFormat: Int, val ver
 
     /** StereoCompositor's placeOnPanel and placeBetweenPanels: on the window hit, or at the first window's distance. */
     private fun drawCursor(cmd: VkCommandBuffer, vp: FloatArray) {
-        val ring = cursorTexture ?: return
         val hit = lastHit
         val placed: Pair<FloatArray, Float> = if (hit != null) {
             val panel = hit.panel
@@ -224,10 +242,44 @@ class DesktopCompositor(private val vk: VulkanContext, colorFormat: Int, val ver
             )
             basis to reference.pose.widthMetres / reference.widthPx
         }
-        val size = ChromeLayout.RING_PX * placed.second
-        val model = Mat4.multiply(placed.first, Mat4.scale(size, size, 1f))
+        val shape = hit?.takeIf { it.part == HitPart.CONTENT }?.panel?.cursorShape ?: CursorShape.DEFAULT
+        val arrow = if (cursorStyle == CursorStyle.ARROW) cursors.arrow(shape) else null
+        if (cursorStyle == CursorStyle.ARROW && shape == CursorShape.NONE) return
+        val picture = arrow ?: cursors.ring
+        val size = (if (arrow != null) ChromeLayout.ARROW_PX else ChromeLayout.RING_PX) * placed.second
+        val model = Mat4.multiply(
+            Mat4.multiply(placed.first, Mat4.scale(size, size, 1f)),
+            Mat4.translation(0.5f - picture.hotspotX, picture.hotspotY - 0.5f, 0f),
+        )
+        val texture = picture.texture
         panels.bind(cmd)
-        panels.draw(cmd, ring, Mat4.multiply(vp, model), ring.widthPx.toFloat(), ring.heightPx.toFloat(), 0f, 1f)
+        panels.draw(cmd, texture, Mat4.multiply(vp, model), texture.widthPx.toFloat(), texture.heightPx.toFloat(), 0f, 1f)
+    }
+
+    private fun drawNotice(cmd: VkCommandBuffer, notice: Notice, vp: FloatArray) {
+        val distance = scene.panels.firstOrNull()?.pose?.distanceMetres ?: SIZE_REFERENCE_METRES
+        val metresPerPx = NoticeLayout.metresPerPx(distance)
+        fun card(centreXPx: Float, centreYPx: Float, widthPx: Float, heightPx: Float): FloatArray {
+            val local = Mat4.multiply(
+                Mat4.translation((centreXPx - NoticeLayout.WIDTH_PX / 2f) * metresPerPx, -(centreYPx - NoticeLayout.HEIGHT_PX / 2f) * metresPerPx, -distance),
+                Mat4.scale(widthPx * metresPerPx, heightPx * metresPerPx, 1f),
+            )
+            return Mat4.multiply(vp, Mat4.multiply(headRotation, local))
+        }
+        panels.bind(cmd)
+        panels.draw(cmd, notices.texture(notice.text, frame, ::forget),
+            card(NoticeLayout.WIDTH_PX / 2f, NoticeLayout.HEIGHT_PX / 2f, NoticeLayout.WIDTH_PX, NoticeLayout.HEIGHT_PX),
+            NoticeLayout.WIDTH_PX, NoticeLayout.HEIGHT_PX, 0f, 1f)
+        chrome.bind(cmd)
+        val track = NoticeLayout.TRACK
+        chrome.solid(cmd, card(NoticeLayout.WIDTH_PX / 2f, NoticeLayout.BAR_MID_Y_PX, NoticeLayout.BAR_WIDTH_PX, NoticeLayout.BAR_HEIGHT_PX),
+            track[0], track[1], track[2], track[3])
+        val filled = NoticeLayout.filledPx(notice)
+        if (filled > 0f) {
+            val fill = NoticeLayout.FILL
+            chrome.solid(cmd, card(NoticeLayout.BAR_INSET_PX + filled / 2f, NoticeLayout.BAR_MID_Y_PX, filled, NoticeLayout.BAR_HEIGHT_PX),
+                fill[0], fill[1], fill[2], fill[3])
+        }
     }
 
     fun forget(texture: TextureSource) = panels.forget(texture.view)
@@ -235,7 +287,13 @@ class DesktopCompositor(private val vk: VulkanContext, colorFormat: Int, val ver
     override fun close() {
         stereo?.close()
         titleBars.close()
+        notices.close()
+        cursors.close()
         chrome.close()
         panels.close()
+    }
+
+    private companion object {
+        const val SIZE_REFERENCE_METRES = 4f
     }
 }

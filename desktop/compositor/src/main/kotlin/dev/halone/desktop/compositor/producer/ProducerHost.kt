@@ -1,5 +1,6 @@
 package dev.halone.desktop.compositor.producer
 
+import dev.halone.compositor.CursorShape
 import dev.halone.desktop.compositor.vk.VulkanContext
 import com.sun.jna.ptr.IntByReference
 import java.io.File
@@ -50,12 +51,16 @@ class ProducerHost(
     /** Called on the render thread when a resized panel's page is ready at its new size. */
     var onPanelResized: ((index: Int, texture: ProducerTexture) -> Unit)? = null
 
+    /** Called on the render thread when a panel's content asks for another cursor. */
+    var onCursorChanged: ((index: Int, shape: CursorShape) -> Unit)? = null
+
     /** Called on the render thread just before a replaced texture is closed. */
     var onTextureClosed: ((ProducerTexture) -> Unit)? = null
 
     private data class Event(
         val kind: Int, val panel: Int, val index: Int, val count: Int, val width: Int, val height: Int,
         val reply: Int, val seq: Long, val readyNs: Long, val arrivedNs: Long, val surfaces: LongArray,
+        val name: String,
     )
 
     init {
@@ -81,6 +86,7 @@ class ProducerHost(
             events += Event(
                 event.kind, event.panel, event.index, event.count, event.width, event.height,
                 event.reply, event.seq, event.readyNs, event.arrivedNs, event.surfaces.copyOf(event.count),
+                event.name.takeWhile { it != 0.toByte() }.toByteArray().decodeToString(),
             )
         }
     }
@@ -106,6 +112,7 @@ class ProducerHost(
                         onPanelReady?.invoke(e.panel, texture)
                     }
                 }
+                BridgeEvent.CURSOR -> onCursorChanged?.invoke(e.panel, CursorShape.ofCss(e.name))
                 BridgeEvent.FRAME -> {
                     val into = if (e.panel in resizes) pendingResized else pending
                     if ((into[e.panel]?.seq ?: -1) < e.seq) into[e.panel] = e

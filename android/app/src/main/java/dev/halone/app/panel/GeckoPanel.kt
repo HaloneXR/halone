@@ -7,6 +7,7 @@ import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.Surface
 import dev.halone.compositor.CursorShape
+import dev.halone.compositor.CursorShapes
 import dev.halone.compositor.PanelEngine
 import dev.halone.compositor.TouchPhase
 import org.mozilla.geckoview.GeckoDisplay
@@ -284,7 +285,7 @@ class GeckoPanel(
             }
 
             override fun onPointerIconChange(session: GeckoSession, icon: android.view.PointerIcon) {
-                tab.cursor = CursorShape.of(appContext, icon)
+                tab.cursor = CursorShapes.of(appContext, icon)
             }
 
             override fun onCrash(session: GeckoSession) = log("  gecko: CONTENT PROCESS CRASHED")

@@ -49,27 +49,22 @@ internal class CursorTextures {
         return ids[0]
     }
 
-    /** The arrow theme's colours: a light rim around a dark body, which the glasses show as the rim alone. */
     private fun paintRing(): Bitmap {
         val bitmap = Bitmap.createBitmap(RING_PX, RING_PX, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         val centre = RING_PX / 2f
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
-        paint.color = BODY
+        paint.color = ChromeLayout.RING_BODY_ARGB
         paint.strokeWidth = RING_PX * 0.2f
         canvas.drawCircle(centre, centre, RING_PX * 0.3f, paint)
-        paint.color = RIM
+        paint.color = ChromeLayout.RING_RIM_ARGB
         paint.strokeWidth = RING_PX * 0.08f
         canvas.drawCircle(centre, centre, RING_PX * 0.4f, paint)
         canvas.drawCircle(centre, centre, RING_PX * 0.2f, paint)
         return bitmap
     }
 
-    companion object {
-        private const val RING_PX = 128
-
-        /** Material Bibata Beige's outline and body. */
-        const val RIM = 0xFFF5E6CA.toInt()
-        const val BODY = 0xFF4A4232.toInt()
+    private companion object {
+        const val RING_PX = 128
     }
 }

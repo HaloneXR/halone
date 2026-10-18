@@ -11,7 +11,10 @@ enum {
     SPIKE_MSG_TICK = 3,
     SPIKE_MSG_INPUT = 4,
     SPIKE_MSG_RESIZE = 5,
+    SPIKE_MSG_CURSOR = 6,
 };
+
+#define SPIKE_CURSOR_NAME_BYTES 32
 
 typedef struct {
     mach_msg_header_t header;
@@ -73,6 +76,13 @@ typedef struct {
     uint32_t height;
 } spike_resize;
 
+/* The cursor the panel's content asks for, by its CSS name. */
+typedef struct {
+    mach_msg_header_t header;
+    uint32_t panel;
+    char name[SPIKE_CURSOR_NAME_BYTES];
+} spike_cursor;
+
 typedef union {
     mach_msg_header_t header;
     struct {
@@ -83,6 +93,10 @@ typedef union {
         spike_frame msg;
         mach_msg_trailer_t trailer;
     } frame;
+    struct {
+        spike_cursor msg;
+        mach_msg_trailer_t trailer;
+    } cursor;
 } spike_consumer_inbox;
 
 typedef union {

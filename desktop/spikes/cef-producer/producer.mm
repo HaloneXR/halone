@@ -202,6 +202,71 @@ void deliver(Panel *p, const CefAcceleratedPaintInfo &info) {
     sendOrQuit(&f.header, sizeof f);
 }
 
+const char *cssCursor(cef_cursor_type_t type) {
+    switch (type) {
+        case CT_CROSS: return "crosshair";
+        case CT_HAND: return "pointer";
+        case CT_IBEAM: return "text";
+        case CT_WAIT: return "wait";
+        case CT_HELP: return "help";
+        case CT_EASTRESIZE:
+        case CT_WESTRESIZE:
+        case CT_EASTWESTRESIZE:
+        case CT_COLUMNRESIZE:
+        case CT_MIDDLE_PANNING_HORIZONTAL: return "ew-resize";
+        case CT_NORTHRESIZE:
+        case CT_SOUTHRESIZE:
+        case CT_NORTHSOUTHRESIZE:
+        case CT_ROWRESIZE:
+        case CT_MIDDLE_PANNING_VERTICAL: return "ns-resize";
+        case CT_NORTHEASTRESIZE:
+        case CT_SOUTHWESTRESIZE:
+        case CT_NORTHEASTSOUTHWESTRESIZE: return "nesw-resize";
+        case CT_NORTHWESTRESIZE:
+        case CT_SOUTHEASTRESIZE:
+        case CT_NORTHWESTSOUTHEASTRESIZE: return "nwse-resize";
+        case CT_MIDDLEPANNING:
+        case CT_EASTPANNING:
+        case CT_NORTHPANNING:
+        case CT_NORTHEASTPANNING:
+        case CT_NORTHWESTPANNING:
+        case CT_SOUTHPANNING:
+        case CT_SOUTHEASTPANNING:
+        case CT_SOUTHWESTPANNING:
+        case CT_WESTPANNING:
+        case CT_MOVE: return "all-scroll";
+        case CT_VERTICALTEXT: return "vertical-text";
+        case CT_CELL: return "cell";
+        case CT_CONTEXTMENU: return "context-menu";
+        case CT_ALIAS:
+        case CT_DND_LINK: return "alias";
+        case CT_PROGRESS: return "progress";
+        case CT_NODROP:
+        case CT_DND_NONE: return "not-allowed";
+        case CT_COPY:
+        case CT_DND_COPY: return "copy";
+        case CT_NONE: return "none";
+        case CT_NOTALLOWED: return "not-allowed";
+        case CT_ZOOMIN: return "zoom-in";
+        case CT_ZOOMOUT: return "zoom-out";
+        case CT_GRAB: return "grab";
+        case CT_GRABBING:
+        case CT_DND_MOVE: return "grabbing";
+        default: return "default";
+    }
+}
+
+void sendCursor(Panel *p, const char *name) {
+    spike_cursor c = {};
+    c.header.msgh_bits = MACH_MSGH_BITS_SET(MACH_MSG_TYPE_COPY_SEND, 0, 0, 0);
+    c.header.msgh_size = sizeof c;
+    c.header.msgh_remote_port = gConsumer;
+    c.header.msgh_id = SPIKE_MSG_CURSOR;
+    c.panel = p->number;
+    strlcpy(c.name, name, sizeof c.name);
+    sendOrQuit(&c.header, sizeof c);
+}
+
 class PanelClient : public CefClient, public CefRenderHandler, public CefLifeSpanHandler, public CefDisplayHandler {
 public:
     explicit PanelClient(Panel *panel) : panel_(panel) {}
@@ -225,6 +290,15 @@ public:
 
     void OnAfterCreated(CefRefPtr<CefBrowser> browser) override { panel_->browser = browser; }
 
+    bool OnCursorChange(CefRefPtr<CefBrowser>, CefCursorHandle, cef_cursor_type_t type, const CefCursorInfo &) override {
+        const char *name = cssCursor(type);
+        if (name != cursor_) {
+            cursor_ = name;
+            sendCursor(panel_, name);
+        }
+        return true;
+    }
+
     bool OnConsoleMessage(CefRefPtr<CefBrowser>, cef_log_severity_t, const CefString &message, const CefString &,
                           int) override {
         fprintf(stderr, "panel %u console: %s\n", panel_->number, message.ToString().c_str());
@@ -233,6 +307,7 @@ public:
 
 private:
     Panel *panel_;
+    const char *cursor_ = "default";
     IMPLEMENT_REFCOUNTING(PanelClient);
 };
 
@@ -244,6 +319,8 @@ public:
         commandLine->AppendSwitchWithValue("autoplay-policy", "no-user-gesture-required");
         commandLine->AppendSwitchWithValue("remote-debugging-port", "9230");
         commandLine->AppendSwitchWithValue("remote-allow-origins", "*");
+        // Every rebuild changes the binary's signature, and the real keychain asks again each time.
+        commandLine->AppendSwitch("use-mock-keychain");
     }
 
     void OnContextInitialized() override {

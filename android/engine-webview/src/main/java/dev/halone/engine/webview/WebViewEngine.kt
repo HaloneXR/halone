@@ -13,6 +13,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.webkit.WebViewAssetLoader
 import dev.halone.compositor.CursorShape
+import dev.halone.compositor.CursorShapes
 import dev.halone.compositor.MotionSynthesis
 import dev.halone.compositor.PanelEngine
 import dev.halone.compositor.TouchPhase
@@ -162,7 +163,7 @@ class WebViewEngine(
         val view = object : WebView(presentationForDisplay.context) {
             override fun setPointerIcon(pointerIcon: android.view.PointerIcon?) {
                 super.setPointerIcon(pointerIcon)
-                cursorShape = CursorShape.of(context, pointerIcon)
+                cursorShape = CursorShapes.of(context, pointerIcon)
             }
         }.apply {
             settings.javaScriptEnabled = true

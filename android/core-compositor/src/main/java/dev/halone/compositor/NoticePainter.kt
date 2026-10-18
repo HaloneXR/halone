@@ -2,7 +2,6 @@ package dev.halone.compositor
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
@@ -10,9 +9,11 @@ import android.opengl.GLES20
 import android.opengl.GLES30
 import android.opengl.GLUtils
 import android.text.TextPaint
-
-/** A short message held in front of the wearer, with a bar showing how far along it is. */
-data class Notice(val text: String, val progress: Float)
+import dev.halone.compositor.NoticeLayout.HEIGHT_PX
+import dev.halone.compositor.NoticeLayout.RADIUS_PX
+import dev.halone.compositor.NoticeLayout.TEXT_MID_Y_PX
+import dev.halone.compositor.NoticeLayout.TEXT_SIZE_PX
+import dev.halone.compositor.NoticeLayout.WIDTH_PX
 
 /**
  * Paints a [Notice]'s card into a texture, repainting only when the text
@@ -50,11 +51,11 @@ internal class NoticePainter {
         val bitmap = Bitmap.createBitmap((WIDTH_PX * SCALE).toInt(), (HEIGHT_PX * SCALE).toInt(), Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         canvas.scale(SCALE, SCALE)
-        val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = BACKGROUND }
+        val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = NoticeLayout.BACKGROUND_ARGB }
         canvas.drawRoundRect(RectF(0f, 0f, WIDTH_PX, HEIGHT_PX), RADIUS_PX, RADIUS_PX, fill)
         val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             textSize = TEXT_SIZE_PX
-            color = TEXT
+            color = NoticeLayout.TEXT_ARGB
             typeface = Typeface.create("sans-serif", Typeface.NORMAL)
             textAlign = Paint.Align.CENTER
         }
@@ -63,17 +64,7 @@ internal class NoticePainter {
         return bitmap
     }
 
-    companion object {
-        const val WIDTH_PX = 560f
-        const val HEIGHT_PX = 120f
-        const val BAR_INSET_PX = 40f
-        const val BAR_MID_Y_PX = 86f
-        const val BAR_HEIGHT_PX = 8f
-        private const val TEXT_MID_Y_PX = 46f
-        private const val TEXT_SIZE_PX = 26f
-        private const val RADIUS_PX = 24f
-        private const val SCALE = 2f
-        private val BACKGROUND = Color.argb(235, 22, 28, 38)
-        private val TEXT = Color.rgb(232, 238, 247)
+    private companion object {
+        const val SCALE = 2f
     }
 }

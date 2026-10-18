@@ -38,7 +38,10 @@ val nativeBridge = tasks.register<Exec>("nativeBridge") {
     doFirst { output.get().asFile.parentFile.mkdirs() }
 }
 sourceSets.main { resources.srcDir(layout.buildDirectory.dir("native")) }
-tasks.processResources { dependsOn(nativeBridge) }
+tasks.processResources {
+    dependsOn(nativeBridge)
+    from(rootProject.layout.projectDirectory.dir("android/app/src/main/assets/cursors")) { into("cursors") }
+}
 
 dependencies {
     implementation(project(":core-glasses"))

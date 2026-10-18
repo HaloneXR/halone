@@ -7,7 +7,7 @@ import com.sun.jna.ptr.IntByReference
 
 @Structure.FieldOrder(
     "kind", "panel", "index", "count", "width", "height", "reply", "pad",
-    "seq", "begunNs", "paintedNs", "readyNs", "arrivedNs", "surfaces",
+    "seq", "begunNs", "paintedNs", "readyNs", "arrivedNs", "surfaces", "name",
 )
 class BridgeEvent : Structure() {
     @JvmField var kind = 0
@@ -24,12 +24,15 @@ class BridgeEvent : Structure() {
     @JvmField var readyNs = 0L
     @JvmField var arrivedNs = 0L
     @JvmField var surfaces = LongArray(MAX_SURFACES)
+    @JvmField var name = ByteArray(CURSOR_NAME_BYTES)
 
     companion object {
         const val NONE = 0
         const val HELLO = 1
         const val FRAME = 2
+        const val CURSOR = 3
         const val MAX_SURFACES = 8
+        const val CURSOR_NAME_BYTES = 32
     }
 }
 

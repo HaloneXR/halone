@@ -23,6 +23,13 @@ object ChromeLayout {
     /** The ring cursor's size, in its panel's pixels. */
     const val RING_PX = 26f
 
+    /** The arrow's picture, which leaves room around the arrow itself, in panel pixels. */
+    const val ARROW_PX = 40f
+
+    /** The ring in the arrow theme's colours, Material Bibata Beige's outline and body: the glasses show the rim alone. */
+    const val RING_RIM_ARGB = 0xFFF5E6CA.toInt()
+    const val RING_BODY_ARGB = 0xFF4A4232.toInt()
+
     /**
      * How much nearer a held window is drawn. It has to clear the ~8 cm of
      * depth a panel's own width spans at 4 m; at 15 cm the vergence change is

@@ -10,6 +10,7 @@ enum {
     HALONE_EVENT_NONE = 0,
     HALONE_EVENT_HELLO = 1,
     HALONE_EVENT_FRAME = 2,
+    HALONE_EVENT_CURSOR = 3,
 };
 
 typedef struct {
@@ -27,6 +28,7 @@ typedef struct {
     uint64_t readyNs;
     uint64_t arrivedNs;
     uint64_t surfaces[SPIKE_MAX_SURFACES];
+    char name[SPIKE_CURSOR_NAME_BYTES];
 } halone_event;
 
 static mach_timebase_info_data_t timebase;
@@ -80,6 +82,12 @@ int32_t halone_receive(uint32_t port, halone_event *out, int32_t timeoutMs) {
         out->begunNs = f->begun ? to_ns(f->begun) : 0;
         out->paintedNs = to_ns(f->painted);
         out->readyNs = to_ns(f->ready);
+    } else if (in.header.msgh_id == SPIKE_MSG_CURSOR) {
+        spike_cursor *c = &in.cursor.msg;
+        out->kind = HALONE_EVENT_CURSOR;
+        out->panel = c->panel;
+        memcpy(out->name, c->name, SPIKE_CURSOR_NAME_BYTES);
+        out->name[SPIKE_CURSOR_NAME_BYTES - 1] = 0;
     }
     return 0;
 }

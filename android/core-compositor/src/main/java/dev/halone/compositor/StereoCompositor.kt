@@ -1112,7 +1112,7 @@ class StereoCompositor(
         val texture = arrow?.first ?: cursorTextures.ring()
         val hotspotX = arrow?.second?.hotspotX ?: 0.5f
         val hotspotY = arrow?.second?.hotspotY ?: 0.5f
-        val size = (if (arrow != null) ARROW_PX else RING_PX) * metresPerPx
+        val size = (if (arrow != null) ChromeLayout.ARROW_PX else RING_PX) * metresPerPx
         Matrix.scaleM(cursorModel, 0, size, size, 1f)
         // The picture's hotspot, not its middle, lands on the point.
         Matrix.translateM(cursorModel, 0, 0.5f - hotspotX, hotspotY - 0.5f, 0f)
@@ -1186,19 +1186,18 @@ class StereoCompositor(
 
     private fun drawNotice(notice: Notice, viewProjection: FloatArray) {
         val distance = scene.panels.firstOrNull()?.pose?.distanceMetres ?: SIZE_REFERENCE_METRES
-        val metresPerPx = distance * NOTICE_HEIGHT_PER_METRE / NoticePainter.HEIGHT_PX
-        val barWidth = NoticePainter.WIDTH_PX - 2f * NoticePainter.BAR_INSET_PX
-        val filled = barWidth * notice.progress.coerceIn(0f, 1f)
+        val metresPerPx = NoticeLayout.metresPerPx(distance)
+        val filled = NoticeLayout.filledPx(notice)
         GLES20.glDisable(GLES20.GL_DEPTH_TEST)
         GLES20.glEnable(GLES20.GL_BLEND)
         GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA)
-        noticeMvp(NoticePainter.WIDTH_PX / 2f, NoticePainter.HEIGHT_PX / 2f, NoticePainter.WIDTH_PX, NoticePainter.HEIGHT_PX, metresPerPx, distance, viewProjection)
+        noticeMvp(NoticeLayout.WIDTH_PX / 2f, NoticeLayout.HEIGHT_PX / 2f, NoticeLayout.WIDTH_PX, NoticeLayout.HEIGHT_PX, metresPerPx, distance, viewProjection)
         bitmapQuad.draw(mvp, notices.texture(notice.text))
-        noticeMvp(NoticePainter.WIDTH_PX / 2f, NoticePainter.BAR_MID_Y_PX, barWidth, NoticePainter.BAR_HEIGHT_PX, metresPerPx, distance, viewProjection)
-        solid.draw(mvp, 0.18f, 0.18f, 0.18f, 0.18f)
+        noticeMvp(NoticeLayout.WIDTH_PX / 2f, NoticeLayout.BAR_MID_Y_PX, NoticeLayout.BAR_WIDTH_PX, NoticeLayout.BAR_HEIGHT_PX, metresPerPx, distance, viewProjection)
+        NoticeLayout.TRACK.let { solid.draw(mvp, it[0], it[1], it[2], it[3]) }
         if (filled > 0f) {
-            noticeMvp(NoticePainter.BAR_INSET_PX + filled / 2f, NoticePainter.BAR_MID_Y_PX, filled, NoticePainter.BAR_HEIGHT_PX, metresPerPx, distance, viewProjection)
-            solid.draw(mvp, 0.36f, 0.62f, 1f)
+            noticeMvp(NoticeLayout.BAR_INSET_PX + filled / 2f, NoticeLayout.BAR_MID_Y_PX, filled, NoticeLayout.BAR_HEIGHT_PX, metresPerPx, distance, viewProjection)
+            NoticeLayout.FILL.let { solid.draw(mvp, it[0], it[1], it[2], it[3]) }
         }
         GLES20.glDisable(GLES20.GL_BLEND)
         GLES20.glEnable(GLES20.GL_DEPTH_TEST)
@@ -1217,8 +1216,8 @@ class StereoCompositor(
         Matrix.setIdentityM(noticeLocal, 0)
         Matrix.translateM(
             noticeLocal, 0,
-            (centreXPx - NoticePainter.WIDTH_PX / 2f) * metresPerPx,
-            -(centreYPx - NoticePainter.HEIGHT_PX / 2f) * metresPerPx,
+            (centreXPx - NoticeLayout.WIDTH_PX / 2f) * metresPerPx,
+            -(centreYPx - NoticeLayout.HEIGHT_PX / 2f) * metresPerPx,
             -distance,
         )
         Matrix.scaleM(noticeLocal, 0, widthPx * metresPerPx, heightPx * metresPerPx, 1f)
@@ -1553,8 +1552,6 @@ class StereoCompositor(
         private const val FRAME_TIME_MS = 16.6f
         private const val CURSOR_METRES = 0.03f
 
-        /** The arrow's picture, which leaves room around the arrow itself, in panel pixels. */
-        private const val ARROW_PX = 40f
 
 
         /** Where the beam starts, in head space: below and in front of the eyes, out of view. */
@@ -1565,8 +1562,6 @@ class StereoCompositor(
         private const val BEAM_ALPHA_NEAR = 0.8f
         private const val BEAM_ALPHA_FAR = 0.08f
 
-        /** The notice card's height for each metre of distance: about 3.4°, a sixth of the view. */
-        private const val NOTICE_HEIGHT_PER_METRE = 0.06f
         private const val SIZE_REFERENCE_METRES = 4f
         /**
          * A little more overfill than the grid strictly asks for. The corners
