@@ -31,27 +31,43 @@ class FrameAim(private val clock: DisplayClock, private val tracker: HeadTracker
 
     private val ahead = ArrayDeque<Int>()
     private var anchorHostNs = 0L
-    private var periodNs = 0.0
+    private var measuredPeriodNs = 0.0
 
-    val ready: Boolean get() = anchorHostNs != 0L && periodNs > 0 && clock.ready
+    /**
+     * Set where nothing reports present times (RADV on Wayland): frames are then
+     * aimed at the glasses' own refresh grid, this many refreshes after the one
+     * following the sample, instead of at the measured one. On macOS presents
+     * land exactly on that grid, so only the count is unknown.
+     */
+    var clockGridAhead: Int? = null
+
+    private val periodNs: Double get() = if (clockGridAhead != null) clock.periodNs else measuredPeriodNs
+
+    val ready: Boolean get() = clock.ready && (clockGridAhead != null || (anchorHostNs != 0L && measuredPeriodNs > 0))
 
     fun onPresented(sampleNs: Long, actualNs: Long, refreshNs: Long) {
         if (actualNs <= 0 || refreshNs <= 0) return
-        periodNs = refreshNs.toDouble()
+        measuredPeriodNs = refreshNs.toDouble()
         anchorHostNs = actualNs
-        val k = ((actualNs - vsyncAfter(sampleNs)) / periodNs).roundToInt()
+        val k = ((actualNs - vsyncAfter(sampleNs)) / measuredPeriodNs).roundToInt()
         ahead.addLast(k)
         if (ahead.size > HISTORY) ahead.removeFirst()
     }
 
     /** Whole refreshes between the one after sampling and the one the frame is shown on; the median of recent frames. */
-    val refreshesAhead: Int get() = ahead.sorted().let { if (it.isEmpty()) 1 else it[it.size / 2] }
+    val refreshesAhead: Int get() = clockGridAhead ?: ahead.sorted().let { if (it.isEmpty()) 1 else it[it.size / 2] }
 
     private fun vsyncAfter(hostNs: Long): Long =
-        anchorHostNs + (ceil((hostNs - anchorHostNs) / periodNs) * periodNs).toLong()
+        anchorHostNs + (ceil((hostNs - anchorHostNs) / measuredPeriodNs) * measuredPeriodNs).toLong()
 
     /** Host time at which a frame sampled at [sampleNs] should reach the display. */
-    fun photonHostNs(sampleNs: Long): Long = vsyncAfter(sampleNs) + (refreshesAhead * periodNs).toLong()
+    fun photonHostNs(sampleNs: Long): Long {
+        clockGridAhead?.let { count ->
+            val offset = clock.deviceTimeAt(sampleNs) - sampleNs
+            return clock.refreshAfter(clock.deviceTimeAt(sampleNs), 1 + count) - offset
+        }
+        return vsyncAfter(sampleNs) + (refreshesAhead * measuredPeriodNs).toLong()
+    }
 
     private fun firstRowDeviceNs(photonHostNs: Long): Long =
         clock.deviceTimeAt(photonHostNs) + (scanoutOffsetMs * 1e6).toLong()

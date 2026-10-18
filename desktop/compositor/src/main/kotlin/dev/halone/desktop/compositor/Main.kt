@@ -38,7 +38,12 @@ private data class Condition(
     val aimed: Boolean,
     val reproject: Boolean,
     val scan: Float = 1f,
+    /** Refreshes ahead on the glasses' grid, where present times are not reported; null for the default. */
+    val ahead: Int? = null,
 )
+
+/** Where nothing reports present times, until a blind sweep on the hardware says otherwise. */
+private const val DEFAULT_CLOCK_GRID_AHEAD = 2
 
 /** What the first wear check ran: three images, unpaced, the fixed 16.6 ms prediction and no warp. */
 private val BASELINE = Condition("baseline", images = 3, pace = false, aimed = false, reproject = false)
@@ -63,6 +68,8 @@ private class Options(args: Array<String>) {
     val noPresentWait = "--no-present-wait" in args
     val scanSweep = "--scan-sweep" in args
     val scanValues = value(args, "--scan-values")?.split(",")?.map { it.toFloat() } ?: listOf(1f, 0f, -1f)
+    val aheadSweep = "--ahead-sweep" in args
+    val aheadValues = value(args, "--ahead-values")?.split(",")?.map { it.toInt() } ?: listOf(1, 2, 3)
     val reveal = value(args, "--reveal")
     val abSeconds = value(args, "--ab-interval")?.toDouble() ?: 8.0
 
@@ -132,8 +139,10 @@ fun main(args: Array<String>) {
         glfwFocusWindow(window)
     }
 
-    val blind = options.ab || options.scanSweep
+    val blind = options.ab || options.scanSweep || options.aheadSweep
     val abLetters = when {
+        options.aheadSweep -> (options.aheadValues.map { SMOOTH.copy(name = "$it refreshes ahead", ahead = it) } +
+            SMOOTH.copy(name = "not aimed", aimed = false, reproject = false)).shuffled()
         options.scanSweep -> options.scanValues.map { SMOOTH.copy(name = "scan %+.2f".format(it), scan = it) }.shuffled()
         options.ab -> listOf(BASELINE, SMOOTH).shuffled()
         else -> emptyList()
@@ -205,6 +214,7 @@ fun main(args: Array<String>) {
         condition = next
         loop.setImages(next.images)
         aim?.scanoutCompensation = next.scan
+        aim?.clockGridAhead = if (vk.hasDisplayTiming) next.ahead else next.ahead ?: DEFAULT_CLOCK_GRID_AHEAD
         if (letter != null) {
             val panel = compositor.scene.find("panel-1") ?: return
             vkDeviceWaitIdle(vk.device)
