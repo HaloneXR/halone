@@ -191,9 +191,19 @@ class FrameLoop(private val vk: VulkanContext, private val window: Long, private
         presentBlockNs += System.nanoTime() - submitted[id]!!
         frame = (frame + 1) % FRAMES_IN_FLIGHT
         collectTimings()
+        waitableId = if (presented == VK_SUCCESS) id else 0
+        if (presented != VK_SUCCESS) presentResults.merge(presented, 1, Int::plus)
         if (presented == VK_ERROR_OUT_OF_DATE_KHR || presented == VK_SUBOPTIMAL_KHR || resized) rebuild()
         true
     }
+
+    /** Presents that did not return VK_SUCCESS since last read, by result code, for diagnostics. */
+    val presentResults = HashMap<Int, Int>()
+
+    /** Off with HALONE_PRESENT_WAIT=0, to tell a driver's present wait apart from everything else. */
+    var presentWaitEnabled = System.getenv("HALONE_PRESENT_WAIT") != "0"
+
+    private var waitableId = 0L
 
     /** Time spent inside vkQueueSubmit2 and vkQueuePresentKHR since last read, for diagnostics. */
     var primeBlockNs = 0L
@@ -213,8 +223,13 @@ class FrameLoop(private val vk: VulkanContext, private val window: Long, private
     private val submitted = HashMap<Long, Long>()
 
     /**
-     * Blocks until the presentation engine has taken frame [id], or [timeoutNs]
-     * passes. Returns false on timeout or when unsupported.
+     * Blocks until the presentation engine has taken the newest frame, or
+     * [timeoutNs] passes. Returns false on timeout, when unsupported, or when
+     * there is no frame it can wait on.
+     *
+     * Only a frame presented successfully on the current swapchain qualifies.
+     * Waiting on one that was not, as after an out-of-date present or a rebuild,
+     * crashed RADV on Wayland inside vkWaitForPresentKHR.
      *
      * On MoltenVK this returns a few milliseconds after submission, not when the
      * frame is displayed, which is still two refreshes away even with an empty
@@ -222,9 +237,9 @@ class FrameLoop(private val vk: VulkanContext, private val window: Long, private
      * keeps a frame two refreshes from the display instead of three. Waiting for
      * the display timing report instead halves the frame rate.
      */
-    fun waitForPresent(id: Long, timeoutNs: Long): Boolean {
-        if (!vk.hasPresentWait || id <= 0) return false
-        return KHRPresentWait.vkWaitForPresentKHR(vk.device, swapchain.handle, id, timeoutNs) == VK_SUCCESS
+    fun waitForLastPresent(timeoutNs: Long): Boolean {
+        if (!presentWaitEnabled || !vk.hasPresentWait || waitableId <= 0) return false
+        return KHRPresentWait.vkWaitForPresentKHR(vk.device, swapchain.handle, waitableId, timeoutNs) == VK_SUCCESS
     }
 
     /** The display's refresh period as the presentation engine reports it, or 0. */
@@ -254,6 +269,7 @@ class FrameLoop(private val vk: VulkanContext, private val window: Long, private
 
     private fun rebuild() {
         resized = false
+        waitableId = 0
         vkDeviceWaitIdle(vk.device)
         val (w, h) = framebufferSize()
         if (w == 0 || h == 0) return

@@ -30,3 +30,6 @@ android/app/src/main/assets/apps/
 
 # Packed Halone apps
 *.halone
+
+# JVM crash logs
+hs_err_pid*.log

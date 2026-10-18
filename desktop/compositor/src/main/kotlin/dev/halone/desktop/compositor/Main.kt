@@ -60,6 +60,7 @@ private class Options(args: Array<String>) {
     val producerMarginMs = value(args, "--producer-margin")?.toFloat() ?: 10f
     val producerLog = value(args, "--producer-log") ?: "producer.log"
     val inputTest = "--input-test" in args
+    val noPresentWait = "--no-present-wait" in args
     val scanSweep = "--scan-sweep" in args
     val scanValues = value(args, "--scan-values")?.split(",")?.map { it.toFloat() } ?: listOf(1f, 0f, -1f)
     val reveal = value(args, "--reveal")
@@ -153,7 +154,9 @@ fun main(args: Array<String>) {
     val compositor = DesktopCompositor(vk, loop.swapchain.format, verticalFov)
     compositor.stereo = stereo
     println("device: ${vk.deviceName}, Vulkan ${vk.versionString()}, vertical FOV %.1f°".format(verticalFov))
-    println("presentation: display timing ${vk.hasDisplayTiming}, present id ${vk.hasPresentId}, present wait ${vk.hasPresentWait}")
+    if (options.noPresentWait) loop.presentWaitEnabled = false
+    println("presentation: display timing ${vk.hasDisplayTiming}, present id ${vk.hasPresentId}, present wait ${vk.hasPresentWait}" +
+        if (vk.hasPresentWait && !loop.presentWaitEnabled) " (turned off)" else "")
     stackPush().use { stack ->
         val x = stack.mallocInt(1); val y = stack.mallocInt(1); val w = stack.mallocInt(1); val h = stack.mallocInt(1)
         glfwGetWindowPos(window, x, y)
@@ -316,7 +319,7 @@ fun main(args: Array<String>) {
         }
         if (condition.pace) {
             val waitStart = System.nanoTime()
-            loop.waitForPresent(loop.lastPresentId, PACE_TIMEOUT_NS)
+            loop.waitForLastPresent(PACE_TIMEOUT_NS)
             paceWaitNs += System.nanoTime() - waitStart
         }
         glfwPollEvents()
@@ -374,6 +377,10 @@ fun main(args: Array<String>) {
                 frames / (now - reportAt + 2), worstMs, headYaw, headPitch, aim?.refreshesAhead ?: "-",
                 compositor.scene.panels.joinToString { "%.1f°".format(Math.toDegrees(it.pose.yawRadians.toDouble())) }))
             if (!blind) println(probe.report(refreshNs)) else probe.report(refreshNs)
+            if (loop.presentResults.isNotEmpty()) {
+                println("presents not VK_SUCCESS: ${loop.presentResults.entries.joinToString { "VkResult ${it.key} x${it.value}" }}")
+                loop.presentResults.clear()
+            }
             host?.let { h ->
                 val counts = h.takeFrameCounts()
                 println("producer: ${if (h.alive) "running" else "exited"}, new frames per 2 s ${options.producerPanels.indices.joinToString { "$it: ${counts[it] ?: 0}" }}")
