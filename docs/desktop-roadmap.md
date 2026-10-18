@@ -264,6 +264,17 @@ shared textures, over the phase 6 contract.
 - Windows: DXGI shared handles, HID through hidapi, output placement.
 - Linux: DMA-BUF, hidraw permissions (a udev rule), output placement, which is
   the hard part on Wayland.
+- First Linux run, 2026-10-18, on a Radeon 780M (RADV, Mesa 26.2.3) under KDE
+  Wayland:
+  - Windowed mode runs at 60 fps.
+  - Two fixes were needed: RADV lists ~250 device extensions, which
+    overflowed LWJGL's stack; and llvmpipe was listed first, so device
+    selection now prefers a real GPU.
+  - RADV segfaults inside `vkWaitForPresentKHR`, so present-wait is off on
+    Wayland (`HALONE_PRESENT_WAIT=1` forces it on).
+  - RADV offers no `VK_GOOGLE_display_timing` there, so frames can't be aimed
+    at measured presents. The glasses' own display clock could stand in for
+    it.
 
 ### 9. Platform plugins
 
