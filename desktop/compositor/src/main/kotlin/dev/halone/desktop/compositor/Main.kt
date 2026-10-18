@@ -16,16 +16,33 @@ import org.lwjgl.glfw.GLFW.*
 import org.lwjgl.glfw.GLFWVulkan.glfwVulkanSupported
 import org.lwjgl.system.MemoryStack.stackPush
 import org.lwjgl.vulkan.VK10.vkDeviceWaitIdle
+import java.io.File
 import kotlin.math.sin
 import kotlin.system.exitProcess
 
 private const val PANEL_VERTICAL_FILL = 0.75f
 private const val MOUSE_DEGREES_PER_PIXEL = 0.08f
+private const val PACE_TIMEOUT_NS = 100_000_000L
+
+/** How frames are paced, aimed and warped. */
+private data class Condition(val name: String, val images: Int?, val pace: Boolean, val aimed: Boolean, val reproject: Boolean)
+
+/** What the first wear check ran: three images, unpaced, the fixed 16.6 ms prediction and no warp. */
+private val BASELINE = Condition("baseline", images = 3, pace = false, aimed = false, reproject = false)
+
+/** Two images paced on present-wait, the photon aimed from measured presents, and the late warp. */
+private val SMOOTH = Condition("smooth", images = 2, pace = true, aimed = true, reproject = true)
 
 private class Options(args: Array<String>) {
     val seconds = value(args, "--seconds")?.toDouble()
     val sweep = "--sweep" in args
     val glasses = "--glasses" in args
+    val condition = when (value(args, "--condition")) {
+        "baseline" -> BASELINE
+        else -> SMOOTH
+    }
+    val ab = "--ab" in args
+    val reveal = value(args, "--reveal")
 
     private fun value(args: Array<String>, name: String) = args.indexOf(name).takeIf { it >= 0 }?.let { args.getOrNull(it + 1) }
 }
@@ -67,9 +84,12 @@ fun main(args: Array<String>) {
         window = glfwCreateWindow(1600, 900, "Halone", 0, 0)
     }
 
+    val abLetters = if (options.ab) listOf(BASELINE, SMOOTH).shuffled() else emptyList()
+    var condition = if (options.ab) abLetters[0] else options.condition
+
     val optics = session?.device?.optics ?: referenceOptics()
     val vk = VulkanContext(window)
-    val loop = FrameLoop(vk, window)
+    val loop = FrameLoop(vk, window, condition.images)
     var verticalFov = optics.verticalFovDegrees
     val stereo = session?.let {
         StereoRenderer(vk, loop.swapchain.format, it.calibration, optics, loop.swapchain.width, loop.swapchain.height).also { renderer ->
@@ -80,6 +100,7 @@ fun main(args: Array<String>) {
     val compositor = DesktopCompositor(vk, loop.swapchain.format, verticalFov)
     compositor.stereo = stereo
     println("device: ${vk.deviceName}, Vulkan ${vk.versionString()}, vertical FOV %.1f°".format(verticalFov))
+    println("presentation: display timing ${vk.hasDisplayTiming}, present id ${vk.hasPresentId}, present wait ${vk.hasPresentWait}")
     stackPush().use { stack ->
         val x = stack.mallocInt(1); val y = stack.mallocInt(1); val w = stack.mallocInt(1); val h = stack.mallocInt(1)
         glfwGetWindowPos(window, x, y)
@@ -88,9 +109,10 @@ fun main(args: Array<String>) {
     }
 
     var opened = 0
+    fun panelTexture(index: Int, label: String) =
+        StaticTexture(vk, 1280, 800, TestPattern.pixels(1280, 800, label, (index * 0.17f) % 1f))
     fun openPanel() {
-        val hue = (opened * 0.17f) % 1f
-        val texture = StaticTexture(vk, 1280, 800, TestPattern.pixels(1280, 800, "Panel ${opened + 1}", hue))
+        val texture = panelTexture(opened, "Panel ${opened + 1}")
         val panel = DesktopPanel("panel-$opened", 1280, 800, texture, PanelPose(distanceMetres = optics.virtualImageDistanceMetres))
         panel.fitToFov(verticalFov, PANEL_VERTICAL_FILL)
         compositor.scene.open(panel)
@@ -105,6 +127,31 @@ fun main(args: Array<String>) {
         panel.texture.close()
     }
     repeat(3) { openPanel() }
+
+    fun apply(next: Condition, letter: String?) {
+        condition = next
+        loop.setImages(next.images)
+        if (letter != null) {
+            val panel = compositor.scene.find("panel-1") ?: return
+            vkDeviceWaitIdle(vk.device)
+            compositor.forget(panel.texture)
+            panel.texture.close()
+            panel.texture = panelTexture(1, letter)
+            println("condition $letter active")
+        } else {
+            println("condition ${next.name} active")
+        }
+    }
+    apply(condition, if (options.ab) "A" else null)
+
+    val aim = session?.displayClock?.let { FrameAim(it, session.tracker) }
+    val probe = TimingProbe(session?.displayClock)
+    var refreshNs = loop.refreshDurationNs()
+    val sampleById = HashMap<Long, Long>()
+    loop.onPresented = { record ->
+        probe.record(record)
+        sampleById.remove(record.id)?.let { aim?.onPresented(it, record.actualNs, refreshNs) }
+    }
 
     var yaw = 0f
     var pitch = 0f
@@ -144,38 +191,77 @@ fun main(args: Array<String>) {
             }
             GLFW_KEY_N -> openPanel()
             GLFW_KEY_BACKSPACE -> closePanel()
+            GLFW_KEY_1 -> if (options.ab) apply(abLetters[0], "A")
+            GLFW_KEY_2 -> if (options.ab) apply(abLetters[1], "B")
         }
     }
 
     val frameMs = 1000f / refreshHz
     val start = glfwGetTime()
-    var last = start
+    var lastSampleNs = System.nanoTime()
     var reportAt = start + 2
     var frames = 0
     var worstMs = 0.0
+    var paceWaitNs = 0L
     while (!glfwWindowShouldClose(window)) {
+        if (condition.pace) {
+            val waitStart = System.nanoTime()
+            loop.waitForPresent(loop.lastPresentId, PACE_TIMEOUT_NS)
+            paceWaitNs += System.nanoTime() - waitStart
+        }
         glfwPollEvents()
         val now = glfwGetTime()
-        val dt = (now - last).toFloat()
-        worstMs = maxOf(worstMs, (now - last) * 1000)
-        last = now
         if (options.sweep) yaw = 50f * sin((now - start) * 0.6).toFloat()
-        val head = session?.tracker?.predictedPose(frameMs)?.orientation
-            ?: (Quaternion.fromYawRadians(Math.toRadians(yaw.toDouble()).toFloat()) * Quaternion.fromPitchDegrees(pitch))
-        compositor.advance(head, dt)
-        if (loop.frame { compositor.record(it, head) }) frames++
+        val drawn = loop.frame { target ->
+            // Sampled here, after the acquire and fence waits, so none of that
+            // waiting sits between the pose and the frame reaching the display.
+            val sampleNs = System.nanoTime()
+            val dt = (sampleNs - lastSampleNs) / 1e9f
+            worstMs = maxOf(worstMs, dt * 1000.0)
+            lastSampleNs = sampleNs
+            val id = loop.lastPresentId + 1
+            sampleById[id] = sampleNs
+            probe.sampled(id, sampleNs)
+            val aiming = aim?.takeIf { condition.aimed && it.ready }
+            val photon = aiming?.photonHostNs(sampleNs)
+            val head = when {
+                aiming != null && photon != null -> aiming.renderPose(photon).orientation
+                session != null -> session.tracker.predictedPose(frameMs).orientation
+                else -> Quaternion.fromYawRadians(Math.toRadians(yaw.toDouble()).toFloat()) * Quaternion.fromPitchDegrees(pitch)
+            }
+            if (photon != null) probe.aimed(id, photon)
+            compositor.advance(head, dt)
+            val warp = if (aiming != null && photon != null && condition.reproject) { { aiming.warpPoses(photon) } } else null
+            compositor.record(target, head, warp)
+        }
+        if (drawn) frames++
+        if (sampleById.size > 512) sampleById.keys.sorted().take(256).forEach { sampleById.remove(it) }
         if (now >= reportAt) {
-            val (headYaw, headPitch, _) = head.toEulerDegrees()
-            println("%.1f fps, worst frame %.1f ms, head yaw %.1f° pitch %.1f°, panels at %s".format(
-                frames / (now - reportAt + 2), worstMs, headYaw, headPitch,
+            refreshNs = loop.refreshDurationNs()
+            val head = session?.tracker?.pose?.orientation
+            val (headYaw, headPitch, _) = head?.toEulerDegrees() ?: Triple(yaw, pitch, 0f)
+            println("%.1f fps, worst frame %.1f ms, head yaw %.1f° pitch %.1f°, refreshes ahead %s, panels at %s".format(
+                frames / (now - reportAt + 2), worstMs, headYaw, headPitch, aim?.refreshesAhead ?: "-",
                 compositor.scene.panels.joinToString { "%.1f°".format(Math.toDegrees(it.pose.yawRadians.toDouble())) }))
+            if (!options.ab) println(probe.report(refreshNs)) else probe.report(refreshNs)
+            if (!options.ab) println("blocking: pace wait %.2f, prime %.2f, submit %.2f, present %.2f ms per frame".format(
+                paceWaitNs / 1e6 / maxOf(frames, 1), loop.primeBlockNs / 1e6 / maxOf(frames, 1),
+                loop.submitBlockNs / 1e6 / maxOf(frames, 1), loop.presentBlockNs / 1e6 / maxOf(frames, 1)))
+            loop.primeBlockNs = 0
+            loop.submitBlockNs = 0
+            loop.presentBlockNs = 0
             frames = 0
             worstMs = 0.0
+            paceWaitNs = 0
             reportAt = now + 2
         }
         if (options.seconds != null && now - start >= options.seconds) break
     }
 
+    if (options.ab) {
+        val mapping = "A = ${abLetters[0].name}, B = ${abLetters[1].name}\n"
+        options.reveal?.let { File(it).writeText(mapping) } ?: println("reveal: $mapping")
+    }
     vkDeviceWaitIdle(vk.device)
     compositor.scene.panels.forEach { it.texture.close() }
     compositor.close()

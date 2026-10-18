@@ -11,8 +11,15 @@ import org.lwjgl.vulkan.VkSurfaceFormatKHR
 import org.lwjgl.vulkan.VkSwapchainCreateInfoKHR
 
 /** The window's images. Rebuilt whenever the surface changes size. */
-class Swapchain(private val vk: VulkanContext, width: Int, height: Int, old: Swapchain? = null) : AutoCloseable {
+class Swapchain(
+    private val vk: VulkanContext,
+    width: Int,
+    height: Int,
+    old: Swapchain? = null,
+    requestedImages: Int? = null,
+) : AutoCloseable {
     val handle: Long
+    val minImages: Int
     val format: Int
     val width: Int
     val height: Int
@@ -36,8 +43,9 @@ class Swapchain(private val vk: VulkanContext, width: Int, height: Int, old: Swa
             this.width = if (extent.width() == -1) width else extent.width()
             this.height = if (extent.height() == -1) height else extent.height()
 
-            var imageCount = caps.minImageCount() + 1
+            var imageCount = (requestedImages ?: (caps.minImageCount() + 1)).coerceAtLeast(caps.minImageCount())
             if (caps.maxImageCount() in 1 until imageCount) imageCount = caps.maxImageCount()
+            minImages = caps.minImageCount()
 
             val info = VkSwapchainCreateInfoKHR.calloc(stack)
                 .sType(VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR)

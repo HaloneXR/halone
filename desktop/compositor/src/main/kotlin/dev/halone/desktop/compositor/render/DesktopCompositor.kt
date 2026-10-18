@@ -22,7 +22,7 @@ class DesktopPanel(
     id: String,
     override val widthPx: Int,
     override val heightPx: Int,
-    val texture: TextureSource,
+    var texture: TextureSource,
     pose: PanelPose = PanelPose(),
 ) : ScenePanel(id, pose) {
     var cornerRadiusPx: Float = 24f
@@ -44,9 +44,9 @@ class DesktopCompositor(private val vk: VulkanContext, colorFormat: Int, val ver
         scene.advanceFollow(Math.toRadians(yawDegrees.toDouble()).toFloat(), dt)
     }
 
-    fun record(target: FrameTarget, head: Quaternion) {
+    fun record(target: FrameTarget, head: Quaternion, warpPoses: (() -> Pair<Quaternion, Quaternion>)? = null) {
         val stereo = stereo
-        if (stereo != null) stereo.record(target, head, ::drawScene) else recordMono(target, head)
+        if (stereo != null) stereo.record(target, head, ::drawScene, warpPoses) else recordMono(target, head)
     }
 
     private fun recordMono(target: FrameTarget, head: Quaternion) = stackPush().use { stack ->

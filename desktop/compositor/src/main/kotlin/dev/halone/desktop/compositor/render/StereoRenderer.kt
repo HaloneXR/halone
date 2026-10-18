@@ -1,6 +1,8 @@
 package dev.halone.desktop.compositor.render
 
 import dev.halone.compositor.DistortionMesh
+import dev.halone.compositor.Reprojection
+import org.lwjgl.vulkan.VkPushConstantRange
 import dev.halone.desktop.compositor.math.Mat4
 import dev.halone.desktop.compositor.vk.FrameLoop
 import dev.halone.desktop.compositor.vk.FrameTarget
@@ -59,7 +61,13 @@ class StereoRenderer(
     optics: Optics,
     frameWidth: Int,
     private val frameHeight: Int,
+    reprojection: Boolean = true,
 ) : AutoCloseable {
+    private val eyeRotations = Array(2) { Quaternion.IDENTITY }
+    private val tanScale = Array(2) { FloatArray(2) }
+    private val tanOffset = Array(2) { FloatArray(2) }
+    private val rotationStart = FloatArray(9)
+    private val rotationEnd = FloatArray(9)
     private val eyeWidth = frameWidth / 2
     val overfill: Float
     val lensCorrected: Boolean
@@ -88,25 +96,31 @@ class StereoRenderer(
         val leftGrid = left?.distortion
         val rightGrid = right?.distortion
         lensCorrected = leftGrid != null && rightGrid != null
-        overfill = if (lensCorrected) {
-            maxOf(
-                DistortionMesh.requiredOverfill(leftGrid!!, left!!.widthPx, left.heightPx),
-                DistortionMesh.requiredOverfill(rightGrid!!, right!!.widthPx, right.heightPx),
-            ) + OVERFILL_MARGIN
-        } else 0f
-        textureWidth = (eyeWidth * (1f + 2f * overfill)).toInt()
-        textureHeight = (frameHeight * (1f + 2f * overfill)).toInt()
-
         val eyeAspect = eyeWidth.toFloat() / frameHeight
         fun frustumFor(index: Int): Frustum =
             (if (index == 0) left else right)?.frustum ?: run {
                 val halfV = tan(Math.toRadians(optics.verticalFovDegrees / 2.0)).toFloat()
                 Frustum(-halfV * eyeAspect, halfV * eyeAspect, -halfV, halfV)
             }
+        val lensNeeded = if (lensCorrected) {
+            maxOf(
+                DistortionMesh.requiredOverfill(leftGrid!!, left!!.widthPx, left.heightPx),
+                DistortionMesh.requiredOverfill(rightGrid!!, right!!.widthPx, right.heightPx),
+            ) + OVERFILL_MARGIN
+        } else 0f
+        val warpNeeded = if (reprojection) {
+            Reprojection.overfillFor(frustumFor(0), Math.toRadians(REPROJECTION_RATE_DEGREES_PER_SECOND).toFloat(), SCANOUT_SECONDS)
+        } else 0f
+        overfill = maxOf(lensNeeded, warpNeeded)
+        textureWidth = (eyeWidth * (1f + 2f * overfill)).toInt()
+        textureHeight = (frameHeight * (1f + 2f * overfill)).toInt()
+
         visibleVerticalDegrees = frustumFor(0).verticalDegrees
         for (index in 0 until 2) {
             val f = frustumFor(index).expandedBy(overfill)
             Mat4.multiply(Mat4.VULKAN_CLIP, Mat4.frustum(f.left * NEAR, f.right * NEAR, f.bottom * NEAR, f.top * NEAR, NEAR, FAR), projections[index])
+            Reprojection.tangentScale(f, tanScale[index])
+            Reprojection.tangentOffset(f, tanOffset[index])
         }
 
         if (left != null && right != null) {
@@ -116,7 +130,8 @@ class StereoRenderer(
             for (index in 0 until 2) {
                 val eye = if (index == 0) left else right
                 val offset = imuFromHead.rotate(eye.positionFromImu - midpoint)
-                Mat4.multiply(Mat4.translation(offset.x, offset.y, offset.z), Mat4.rotation(eye.rotationFromHead(headFromImu)), eyePoses[index])
+                eyeRotations[index] = eye.rotationFromHead(headFromImu)
+                Mat4.multiply(Mat4.translation(offset.x, offset.y, offset.z), Mat4.rotation(eyeRotations[index]), eyePoses[index])
             }
         } else {
             for (index in 0 until 2) {
@@ -161,8 +176,9 @@ class StereoRenderer(
             vkCheck(vkCreateDescriptorSetLayout(vk.device, VkDescriptorSetLayoutCreateInfo.calloc(stack)
                 .sType(VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO).pBindings(binding), null, pHandle), "distortion set layout")
             setLayout = pHandle.get(0)
+            val push = VkPushConstantRange.calloc(1, stack).stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT).offset(0).size(PUSH_BYTES)
             vkCheck(vkCreatePipelineLayout(vk.device, VkPipelineLayoutCreateInfo.calloc(stack)
-                .sType(VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO).pSetLayouts(stack.longs(setLayout)), null, pHandle), "distortion layout")
+                .sType(VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO).pSetLayouts(stack.longs(setLayout)).pPushConstantRanges(push), null, pHandle), "distortion layout")
             layout = pHandle.get(0)
 
             val vertex = Shaders.module(vk, "distortion.vert", Stage.VERTEX, VERTEX)
@@ -223,8 +239,17 @@ class StereoRenderer(
     fun describe() = "%s, %.1f%% overfill, %dx%d per eye offscreen, visible vertical %.2f°".format(
         if (lensCorrected) "lens correction on" else "lens correction off", overfill * 100, textureWidth, textureHeight, visibleVerticalDegrees)
 
-    /** Draws both eyes with [drawScene], then warps them onto [target], which must be [frameHeight] high and two eyes wide. */
-    fun record(target: FrameTarget, head: Quaternion, drawScene: (VkCommandBuffer, FloatArray) -> Unit) = stackPush().use { stack ->
+    /**
+     * Draws both eyes with [drawScene] at [head], then warps them onto [target],
+     * which must be [frameHeight] high and two eyes wide. [warpPoses], when given,
+     * is asked for the first and last rows' poses only after the eyes are recorded.
+     */
+    fun record(
+        target: FrameTarget,
+        head: Quaternion,
+        drawScene: (VkCommandBuffer, FloatArray) -> Unit,
+        warpPoses: (() -> Pair<Quaternion, Quaternion>)? = null,
+    ) = stackPush().use { stack ->
         val cmd = target.commands
         val headMatrix = Mat4.rotation(head)
         val clear = VkClearValue.calloc(stack)
@@ -243,10 +268,25 @@ class StereoRenderer(
                 VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT)
         }
 
+        val warp = warpPoses?.invoke()
         begin(cmd, target.view, target.width, target.height, clear, 0, 0, target.width, target.height)
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline)
         val half = target.width / 2
         for (index in 0 until 2) {
+            val push = stack.calloc(PUSH_BYTES)
+            if (warp != null) {
+                Reprojection.rotation(head, warp.first, eyeRotations[index], rotationStart)
+                Reprojection.rotation(head, warp.second, eyeRotations[index], rotationEnd)
+                for (matrix in listOf(rotationStart, rotationEnd)) {
+                    for (column in 0 until 3) push.putFloat(matrix[column * 3]).putFloat(matrix[column * 3 + 1]).putFloat(matrix[column * 3 + 2]).putFloat(0f)
+                }
+            } else {
+                push.position(96)
+            }
+            push.putFloat(tanScale[index][0]).putFloat(tanScale[index][1]).putFloat(tanOffset[index][0]).putFloat(tanOffset[index][1])
+            push.putFloat(if (warp != null) 1f else 0f)
+            push.rewind()
+            vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, push)
             vkCmdSetViewport(cmd, 0, VkViewport.calloc(1, stack).x((index * half).toFloat()).width(half.toFloat()).height(target.height.toFloat()).maxDepth(1f))
             vkCmdSetScissor(cmd, 0, VkRect2D.calloc(1, stack).also { it[0].offset().set(index * half, 0); it[0].extent().set(half, target.height) })
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, stack.longs(sets[index]), null)
@@ -288,16 +328,23 @@ class StereoRenderer(
         const val NEAR = 0.5f
         const val FAR = 200f
         const val OVERFILL_MARGIN = 0.005f
+        const val REPROJECTION_RATE_DEGREES_PER_SECOND = 45.0
+        const val SCANOUT_SECONDS = 1f / 60f
+        const val PUSH_BYTES = 128
 
-        // The mesh is in OpenGL's conventions: NDC with y up, and v counted from
-        // the bottom row of the rendered image. Vulkan has both the other way up.
+        // The mesh, and the reprojection's tangent mapping, are in OpenGL's
+        // conventions: NDC with y up, and v counted from the bottom row of the
+        // rendered image. Vulkan has both the other way up, so the warp runs in
+        // OpenGL's terms and only the final lookup is flipped.
         val VERTEX = """
             #version 450
             layout(location = 0) in vec2 aPosition;
             layout(location = 1) in vec2 aTexCoord;
-            layout(location = 0) out vec2 vUv;
+            layout(location = 0) out vec2 vTexCoord;
+            layout(location = 1) out float vRow;
             void main() {
-                vUv = vec2(aTexCoord.x, 1.0 - aTexCoord.y);
+                vTexCoord = aTexCoord;
+                vRow = 0.5 - 0.5 * aPosition.y;
                 gl_Position = vec4(aPosition.x, -aPosition.y, 0.0, 1.0);
             }
         """.trimIndent()
@@ -305,10 +352,26 @@ class StereoRenderer(
         val FRAGMENT = """
             #version 450
             layout(set = 0, binding = 0) uniform sampler2D eye;
-            layout(location = 0) in vec2 vUv;
+            layout(push_constant) uniform Push {
+                mat3 rotationStart;
+                mat3 rotationEnd;
+                vec2 tanScale;
+                vec2 tanOffset;
+                float reproject;
+            } pc;
+            layout(location = 0) in vec2 vTexCoord;
+            layout(location = 1) in float vRow;
             layout(location = 0) out vec4 color;
+            vec2 carryBack(vec2 uv, mat3 rotation) {
+                vec3 ray = vec3(uv * pc.tanScale + pc.tanOffset, -1.0);
+                vec3 turned = rotation * ray;
+                float depth = max(-turned.z, 0.001);
+                return (turned.xy / depth - pc.tanOffset) / pc.tanScale;
+            }
             void main() {
-                color = texture(eye, vUv);
+                vec2 uv = vTexCoord;
+                if (pc.reproject > 0.5) uv = mix(carryBack(uv, pc.rotationStart), carryBack(uv, pc.rotationEnd), vRow);
+                color = texture(eye, vec2(uv.x, 1.0 - uv.y));
             }
         """.trimIndent()
     }

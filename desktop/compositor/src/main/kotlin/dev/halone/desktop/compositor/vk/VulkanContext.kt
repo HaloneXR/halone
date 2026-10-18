@@ -8,6 +8,11 @@ import org.lwjgl.system.MemoryStack.stackPush
 import org.lwjgl.vulkan.EXTMetalObjects
 import org.lwjgl.vulkan.GOOGLEDisplayTiming
 import org.lwjgl.vulkan.KHRPortabilityEnumeration
+import org.lwjgl.vulkan.KHRPresentId
+import org.lwjgl.vulkan.KHRPresentWait
+import org.lwjgl.vulkan.VkPhysicalDeviceFeatures2
+import org.lwjgl.vulkan.VkPhysicalDevicePresentIdFeaturesKHR
+import org.lwjgl.vulkan.VkPhysicalDevicePresentWaitFeaturesKHR
 import org.lwjgl.vulkan.KHRSurface.vkDestroySurfaceKHR
 import org.lwjgl.vulkan.KHRSurface.vkGetPhysicalDeviceSurfaceSupportKHR
 import org.lwjgl.vulkan.KHRSwapchain
@@ -46,6 +51,8 @@ class VulkanContext(window: Long) : AutoCloseable {
 
     val hasMetalObjects get() = EXTMetalObjects.VK_EXT_METAL_OBJECTS_EXTENSION_NAME in enabledExtensions
     val hasDisplayTiming get() = GOOGLEDisplayTiming.VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME in enabledExtensions
+    val hasPresentId get() = KHRPresentId.VK_KHR_PRESENT_ID_EXTENSION_NAME in enabledExtensions
+    val hasPresentWait get() = KHRPresentWait.VK_KHR_PRESENT_WAIT_EXTENSION_NAME in enabledExtensions
 
     init {
         stackPush().use { stack ->
@@ -87,11 +94,22 @@ class VulkanContext(window: Long) : AutoCloseable {
             queueFamily = findQueueFamily(stack)
             availableExtensions = deviceExtensions(stack)
 
-            val wanted = listOf(
+            val presentIdFeature = VkPhysicalDevicePresentIdFeaturesKHR.calloc(stack).sType(KHRPresentId.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR)
+            val presentWaitFeature = VkPhysicalDevicePresentWaitFeaturesKHR.calloc(stack).sType(KHRPresentWait.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR)
+                .pNext(presentIdFeature.address())
+            vkGetPhysicalDeviceFeatures2(physicalDevice, VkPhysicalDeviceFeatures2.calloc(stack)
+                .sType(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2).pNext(presentWaitFeature.address()))
+            val presentIdSupported = presentIdFeature.presentId() && KHRPresentId.VK_KHR_PRESENT_ID_EXTENSION_NAME in availableExtensions
+            val presentWaitSupported = presentIdSupported && presentWaitFeature.presentWait() &&
+                KHRPresentWait.VK_KHR_PRESENT_WAIT_EXTENSION_NAME in availableExtensions
+
+            val wanted = listOfNotNull(
                 KHRSwapchain.VK_KHR_SWAPCHAIN_EXTENSION_NAME,
                 "VK_KHR_portability_subset",
                 EXTMetalObjects.VK_EXT_METAL_OBJECTS_EXTENSION_NAME,
                 GOOGLEDisplayTiming.VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME,
+                KHRPresentId.VK_KHR_PRESENT_ID_EXTENSION_NAME.takeIf { presentIdSupported },
+                KHRPresentWait.VK_KHR_PRESENT_WAIT_EXTENSION_NAME.takeIf { presentWaitSupported },
             )
             enabledExtensions = wanted.filter { it in availableExtensions }.toSet()
 
@@ -100,10 +118,16 @@ class VulkanContext(window: Long) : AutoCloseable {
                 .sType(VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO)
                 .queueFamilyIndex(queueFamily)
                 .pQueuePriorities(priority)
+            val enablePresentId = VkPhysicalDevicePresentIdFeaturesKHR.calloc(stack)
+                .sType(KHRPresentId.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR).presentId(presentIdSupported)
+            val enablePresentWait = VkPhysicalDevicePresentWaitFeaturesKHR.calloc(stack)
+                .sType(KHRPresentWait.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR).presentWait(presentWaitSupported)
+                .pNext(enablePresentId.address())
             val features13 = VkPhysicalDeviceVulkan13Features.calloc(stack)
                 .sType(VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES)
                 .dynamicRendering(true)
                 .synchronization2(true)
+                .pNext(enablePresentWait.address())
             val deviceInfo = VkDeviceCreateInfo.calloc(stack)
                 .sType(VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO)
                 .pNext(features13)

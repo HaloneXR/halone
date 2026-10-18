@@ -6,6 +6,7 @@ import dev.halone.glasses.api.DisplayMode
 import dev.halone.glasses.api.GlassesDevice
 import dev.halone.glasses.api.preferredMonoMode
 import dev.halone.glasses.api.preferredStereoMode
+import dev.halone.glasses.fusion.DisplayClock
 import dev.halone.glasses.fusion.HeadTracker
 import org.lwjgl.glfw.GLFW.*
 
@@ -18,6 +19,29 @@ class GlassesSession private constructor(
 ) : AutoCloseable {
     var stereoMode: DisplayMode? = null
         private set
+
+    /** The glasses' refresh timing on the host clock, when they report it. */
+    val displayClock: DisplayClock? = device.scanout?.let { DisplayClock() }
+
+    @Volatile
+    private var syncing = true
+    private val clockSync: Thread? = displayClock?.let { clock ->
+        val scanout = device.scanout!!
+        scanout.start { clock.onBeacon(it) }
+        Thread({
+            while (syncing) {
+                repeat(CLOCK_BURST) {
+                    scanout.syncClock().onSuccess { clock.onClockSample(it) }
+                    Thread.sleep(CLOCK_BURST_GAP_MS)
+                }
+                var waited = 0L
+                while (syncing && waited < CLOCK_RESYNC_MS) {
+                    Thread.sleep(100)
+                    waited += 100
+                }
+            }
+        }, "display-clock").apply { isDaemon = true; start() }
+    }
 
     /** Switches to the best stereo mode, unless the glasses are already in one. */
     fun enterStereo(): Result<DisplayMode> {
@@ -52,12 +76,19 @@ class GlassesSession private constructor(
     }
 
     override fun close() {
+        syncing = false
+        clockSync?.join(1000)
+        runCatching { device.scanout?.stop() }
         runCatching { device.tracking.stop() }
         device.display?.let { display -> display.preferredMonoMode()?.let { runCatching { display.setMode(it) } } }
         glasses.shutdown()
     }
 
     companion object {
+        private const val CLOCK_BURST = 5
+        private const val CLOCK_BURST_GAP_MS = 25L
+        private const val CLOCK_RESYNC_MS = 5_000L
+
         fun open(log: (String) -> Unit): GlassesSession {
             val glasses = DesktopGlasses()
             val device = glasses.connect().getOrElse {
