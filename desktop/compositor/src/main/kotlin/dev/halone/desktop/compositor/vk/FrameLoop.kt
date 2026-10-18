@@ -1,6 +1,5 @@
 package dev.halone.desktop.compositor.vk
 
-import org.lwjgl.glfw.GLFW.glfwGetFramebufferSize
 import org.lwjgl.system.MemoryStack.stackPush
 import org.lwjgl.vulkan.KHRSwapchain.*
 import org.lwjgl.vulkan.VK13.*
@@ -46,7 +45,7 @@ class FrameTarget(val commands: VkCommandBuffer, val image: Long, val view: Long
  * The caller records into a target already in COLOR_ATTACHMENT_OPTIMAL and
  * leaves it there; the loop moves it to and from the presentable layout.
  */
-class FrameLoop(private val vk: VulkanContext, private val window: Long, private var images: Int? = null) : AutoCloseable {
+class FrameLoop(private val vk: VulkanContext, private var images: Int? = null) : AutoCloseable {
     var swapchain: Swapchain
         private set
     private val commandBuffers: Array<VkCommandBuffer>
@@ -140,6 +139,7 @@ class FrameLoop(private val vk: VulkanContext, private val window: Long, private
             rebuild()
             return false
         }
+        if (acquired != VK_SUCCESS && acquired != VK_SUBOPTIMAL_KHR) vkCheck(acquired, "vkAcquireNextImageKHR")
         val index = pIndex.get(0)
         vkResetFences(vk.device, inFlight[frame])
 
@@ -280,12 +280,7 @@ class FrameLoop(private val vk: VulkanContext, private val window: Long, private
         renderFinished = LongArray(swapchain.images.size) { semaphore() }
     }
 
-    private fun framebufferSize(): Pair<Int, Int> = stackPush().use { stack ->
-        val w = stack.mallocInt(1)
-        val h = stack.mallocInt(1)
-        glfwGetFramebufferSize(window, w, h)
-        w.get(0) to h.get(0)
-    }
+    private fun framebufferSize() = vk.output.size()
 
     private fun semaphore(): Long = stackPush().use { stack ->
         val p = stack.mallocLong(1)

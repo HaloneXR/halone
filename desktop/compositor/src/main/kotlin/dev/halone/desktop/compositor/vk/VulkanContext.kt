@@ -1,8 +1,6 @@
 package dev.halone.desktop.compositor.vk
 
 import org.lwjgl.PointerBuffer
-import org.lwjgl.glfw.GLFWVulkan.glfwCreateWindowSurface
-import org.lwjgl.glfw.GLFWVulkan.glfwGetRequiredInstanceExtensions
 import org.lwjgl.system.MemoryStack
 import org.lwjgl.system.MemoryStack.stackPush
 import org.lwjgl.vulkan.EXTMetalObjects
@@ -36,7 +34,9 @@ fun vkCheck(result: Int, what: String) {
 }
 
 /** Instance, surface, device and the one graphics-and-present queue the compositor uses. */
-class VulkanContext(window: Long) : AutoCloseable {
+class VulkanContext(val output: Output) : AutoCloseable {
+    constructor(window: Long) : this(WindowOutput(window))
+
     val instance: VkInstance
     val surface: Long
     val physicalDevice: VkPhysicalDevice
@@ -56,10 +56,7 @@ class VulkanContext(window: Long) : AutoCloseable {
 
     init {
         stackPush().use { stack ->
-            val glfwExtensions = glfwGetRequiredInstanceExtensions()
-                ?: throw IllegalStateException("GLFW found no Vulkan support")
-            val instanceExtensions = mutableListOf<String>()
-            for (i in 0 until glfwExtensions.limit()) instanceExtensions += glfwExtensions.getStringUTF8(i)
+            val instanceExtensions = output.instanceExtensions.toMutableList()
             val portable = KHRPortabilityEnumeration.VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME in instanceExtensionNames(stack)
             if (portable) instanceExtensions += KHRPortabilityEnumeration.VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME
 
@@ -76,25 +73,23 @@ class VulkanContext(window: Long) : AutoCloseable {
             vkCheck(vkCreateInstance(instanceInfo, null, pInstance), "vkCreateInstance")
             instance = VkInstance(pInstance.get(0), instanceInfo)
 
-            val pSurface = stack.mallocLong(1)
-            vkCheck(glfwCreateWindowSurface(instance, window, null, pSurface), "glfwCreateWindowSurface")
-            surface = pSurface.get(0)
-
             val pCount = stack.mallocInt(1)
             vkEnumeratePhysicalDevices(instance, pCount, null)
             val pDevices = stack.mallocPointer(pCount.get(0))
             vkEnumeratePhysicalDevices(instance, pCount, pDevices)
             val props = VkPhysicalDeviceProperties.calloc(stack)
-            val candidates = (0 until pCount.get(0)).map { VkPhysicalDevice(pDevices.get(it), instance) }
-                .mapNotNull { device ->
-                    val family = presentQueueFamily(device, stack)
-                    if (family < 0) return@mapNotNull null
+            val ranked = (0 until pCount.get(0)).map { VkPhysicalDevice(pDevices.get(it), instance) }
+                .sortedBy { device ->
                     vkGetPhysicalDeviceProperties(device, props)
-                    Triple(device, family, DEVICE_PREFERENCE.indexOf(props.deviceType()).let { if (it < 0) DEVICE_PREFERENCE.size else it })
+                    DEVICE_PREFERENCE.indexOf(props.deviceType()).let { if (it < 0) DEVICE_PREFERENCE.size else it }
                 }
-            val (chosen, family, _) = candidates.minByOrNull { it.third }
-                ?: throw IllegalStateException("no Vulkan device can both draw and present to this window")
+            val (chosen, chosenSurface, family) = ranked.firstNotNullOfOrNull { device ->
+                val surface = output.surface(instance, device)
+                if (surface == VK_NULL_HANDLE) return@firstNotNullOfOrNull null
+                presentQueueFamily(device, surface, stack).takeIf { it >= 0 }?.let { Triple(device, surface, it) }
+            } ?: throw IllegalStateException("no Vulkan device can both draw and present to this output")
             physicalDevice = chosen
+            surface = chosenSurface
             queueFamily = family
             vkGetPhysicalDeviceProperties(physicalDevice, props)
             deviceName = props.deviceNameString()
@@ -159,8 +154,8 @@ class VulkanContext(window: Long) : AutoCloseable {
         }
     }
 
-    /** A queue family of [device] that can both draw and present to the window, or -1. */
-    private fun presentQueueFamily(device: VkPhysicalDevice, stack: MemoryStack): Int {
+    /** A queue family of [device] that can both draw and present to [surface], or -1. */
+    private fun presentQueueFamily(device: VkPhysicalDevice, surface: Long, stack: MemoryStack): Int {
         val pCount = stack.mallocInt(1)
         vkGetPhysicalDeviceQueueFamilyProperties(device, pCount, null)
         val families = VkQueueFamilyProperties.malloc(pCount.get(0), stack)
@@ -200,6 +195,7 @@ class VulkanContext(window: Long) : AutoCloseable {
         vkDestroyCommandPool(device, commandPool, null)
         vkDestroyDevice(device, null)
         vkDestroySurfaceKHR(instance, surface, null)
+        output.release()
         vkDestroyInstance(instance, null)
     }
 

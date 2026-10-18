@@ -1,6 +1,8 @@
 package dev.halone.desktop.compositor
 
 import dev.halone.compositor.PanelPose
+import dev.halone.desktop.compositor.lease.DrmLease
+import dev.halone.desktop.compositor.lease.InputWindow
 import dev.halone.desktop.compositor.producer.InputRouter
 import dev.halone.desktop.compositor.producer.PanelSpec
 import dev.halone.compositor.ChromePress
@@ -11,7 +13,10 @@ import dev.halone.desktop.compositor.render.DesktopCompositor
 import dev.halone.desktop.compositor.render.DesktopPanel
 import dev.halone.desktop.compositor.render.StereoRenderer
 import dev.halone.desktop.compositor.render.TestPattern
+import dev.halone.desktop.compositor.vk.DisplayOutput
 import dev.halone.desktop.compositor.vk.FrameLoop
+import dev.halone.desktop.compositor.vk.Output
+import dev.halone.desktop.compositor.vk.WindowOutput
 import dev.halone.desktop.compositor.vk.StaticTexture
 import dev.halone.desktop.compositor.vk.VulkanContext
 import dev.halone.glasses.api.Optics
@@ -56,6 +61,7 @@ private class Options(args: Array<String>) {
     val seconds = value(args, "--seconds")?.toDouble()
     val sweep = "--sweep" in args
     val glasses = "--glasses" in args
+    val lease = "--lease" in args
     val condition = when (value(args, "--condition")) {
         "baseline" -> BASELINE
         else -> SMOOTH
@@ -141,6 +147,8 @@ fun main(args: Array<String>) {
 
     val session = if (options.glasses) GlassesSession.open(::println) else null
     val window: Long
+    var lease: DrmLease? = null
+    var leasedOutput: Output? = null
     var refreshHz = 60
     if (session != null) {
         val mode = session.enterStereo().getOrElse {
@@ -149,23 +157,34 @@ fun main(args: Array<String>) {
             exitProcess(1)
         }
         println("stereo mode: $mode")
-        val monitor = session.findMonitor(mode.frameWidth) ?: run {
-            session.close()
-            println("the glasses' display never appeared at ${mode.frameWidth} wide")
-            exitProcess(1)
+        if (options.lease) {
+            val leased = DrmLease.acquire(session.device.displayNameHints, ::println).getOrElse {
+                session.close()
+                println("could not lease the glasses' display: ${it.message}")
+                exitProcess(1)
+            }
+            lease = leased
+            println("leased: ${leased.offer}")
+            leasedOutput = DisplayOutput(leased.fd, leased.offer.connectorId, mode.frameWidth, mode.frameHeight, mode.refreshHz)
+            window = InputWindow.create("Halone (on the glasses)")
+        } else {
+            val monitor = session.findMonitor(mode.frameWidth) ?: run {
+                session.close()
+                println("the glasses' display never appeared at ${mode.frameWidth} wide")
+                exitProcess(1)
+            }
+            val video = glfwGetVideoMode(monitor)!!
+            refreshHz = video.refreshRate()
+            // GLFW minimises a fullscreen window when it loses focus, which takes the
+            // scene off the glasses as soon as the wearer clicks anything on the Mac.
+            glfwWindowHint(GLFW_AUTO_ICONIFY, GLFW_FALSE)
+            println("monitor: ${glfwGetMonitorName(monitor)} ${video.width()}x${video.height()} @${video.refreshRate()}")
+            window = glfwCreateWindow(video.width(), video.height(), "Halone", monitor, 0)
         }
-        val video = glfwGetVideoMode(monitor)!!
-        refreshHz = video.refreshRate()
-        // GLFW minimises a fullscreen window when it loses focus, which takes the
-        // scene off the glasses as soon as the wearer clicks anything on the Mac.
-        glfwWindowHint(GLFW_AUTO_ICONIFY, GLFW_FALSE)
-        println("monitor: ${glfwGetMonitorName(monitor)} ${video.width()}x${video.height()} @${video.refreshRate()}")
-        window = glfwCreateWindow(video.width(), video.height(), "Halone", monitor, 0)
-        glfwFocusWindow(window)
     } else {
         window = glfwCreateWindow(1600, 900, "Halone", 0, 0)
-        glfwFocusWindow(window)
     }
+    glfwFocusWindow(window)
 
     val blind = options.ab || options.scanSweep || options.aheadSweep
     val abLetters = when {
@@ -179,8 +198,9 @@ fun main(args: Array<String>) {
     var condition = if (blind) abLetters[0] else options.condition
 
     val optics = session?.device?.optics ?: referenceOptics()
-    val vk = VulkanContext(window)
-    val loop = FrameLoop(vk, window, condition.images)
+    val vk = VulkanContext(leasedOutput ?: WindowOutput(window))
+    vk.output.refreshHz?.let { refreshHz = it }
+    val loop = FrameLoop(vk, condition.images)
     var verticalFov = optics.verticalFovDegrees
     val stereo = session?.let {
         StereoRenderer(vk, loop.swapchain.format, it.calibration, optics, loop.swapchain.width, loop.swapchain.height).also { renderer ->
@@ -195,7 +215,7 @@ fun main(args: Array<String>) {
     // RADV (Mesa 26.2.3, KDE Wayland) segfaults inside vkWaitForPresentKHR on the
     // first wait, even for a frame presented successfully. HALONE_PRESENT_WAIT=1
     // forces it back on, to check a newer Mesa.
-    if (glfwGetPlatform() == GLFW_PLATFORM_WAYLAND && System.getenv("HALONE_PRESENT_WAIT") != "1") loop.presentWaitEnabled = false
+    if (lease == null && glfwGetPlatform() == GLFW_PLATFORM_WAYLAND && System.getenv("HALONE_PRESENT_WAIT") != "1") loop.presentWaitEnabled = false
     println("presentation: display timing ${vk.hasDisplayTiming}, present id ${vk.hasPresentId}, present wait ${vk.hasPresentWait}" +
         if (vk.hasPresentWait && !loop.presentWaitEnabled) " (turned off)" else "")
     stackPush().use { stack ->
@@ -293,7 +313,7 @@ fun main(args: Array<String>) {
     var captured = false
     var lastX = Double.NaN
     var lastY = Double.NaN
-    glfwSetFramebufferSizeCallback(window) { _, _, _ -> loop.onResize() }
+    if (lease == null) glfwSetFramebufferSizeCallback(window) { _, _, _ -> loop.onResize() }
     var headYawRadians = 0f
     var headPitchRadians = 0f
     var mods = 0
@@ -475,6 +495,7 @@ fun main(args: Array<String>) {
     compositor.close()
     loop.close()
     vk.close()
+    lease?.close()
     glfwDestroyWindow(window)
     session?.close()
     glfwTerminate()
