@@ -370,7 +370,8 @@ void handleInput(const spike_input &in) {
     Panel *p = findPanel(in.panel);
     if (!p) return;
     if (!p->browser) return;
-    if (in.kind == SPIKE_INPUT_DOWN) focus(p);
+    if (in.kind == SPIKE_INPUT_DOWN || in.kind == SPIKE_INPUT_FOCUS) focus(p);
+    if (in.kind == SPIKE_INPUT_FOCUS) return;
     producer::dispatchInput(p->browser->GetHost(), in, [](const spike_input &key, CefKeyEvent &event) {
         event.native_key_code = (int)key.keyCode;
         event.character = key.character;

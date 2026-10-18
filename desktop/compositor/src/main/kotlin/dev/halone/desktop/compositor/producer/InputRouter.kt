@@ -93,6 +93,19 @@ class InputRouter(
     /** Keeps the cursor inside the panels as they move. Every frame. */
     fun clamp() = cursor.clampTo(scene)
 
+    private var keyTarget: Int? = null
+
+    /** Where keys go, as on Android: the menu, the launcher when it shows, or the focused window. */
+    private fun keyTarget(): Int? = scene.keyTarget?.producerIndex ?: focused
+
+    /** Tells the producer when keys start going to another panel, so its page has the keyboard focus. Call every frame. */
+    fun followKeyTarget() {
+        val target = scene.keyTarget?.producerIndex ?: return
+        if (target == keyTarget) return
+        keyTarget = target
+        host?.input(target, ProducerHost.INPUT_FOCUS, 0f, 0f)
+    }
+
     private fun hover(modifiers: Int) {
         val hit = scene.hitTest(direction)?.takeIf { it.part == HitPart.CONTENT }
         val index = hit?.panel?.producerIndex
@@ -143,12 +156,12 @@ class InputRouter(
     }
 
     /**
-     * Keys go to the panel last clicked. A key that types something waits for
+     * Keys go to [keyTarget]. A key that types something waits for
      * GLFW's character callback, which follows it, so the producer gets the key
      * and its character together; anything else goes straight through.
      */
     fun key(key: Int, scancode: Int, action: Int, modifiers: Int) {
-        val target = focused ?: return
+        val target = keyTarget() ?: return
         when (action) {
             GLFW_PRESS, GLFW_REPEAT -> {
                 val special = SPECIAL_CHARACTERS[key]
@@ -170,7 +183,7 @@ class InputRouter(
     }
 
     fun character(codepoint: Int, modifiers: Int) {
-        val target = focused ?: return
+        val target = keyTarget() ?: return
         val keyCode = pendingKeyCode ?: return
         pendingKeyCode = null
         typed[keyCode] = codepoint

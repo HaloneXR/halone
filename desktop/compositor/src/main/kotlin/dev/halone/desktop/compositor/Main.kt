@@ -383,6 +383,7 @@ fun main(args: Array<String>) {
     glfwSetCharCallback(window) { _, codepoint -> router?.character(codepoint, mods) }
     glfwSetKeyCallback(window) { w, key, scancode, action, modifiers ->
         mods = modifiers
+        if (desktopShell?.key(key, action, modifiers) == true) return@glfwSetKeyCallback
         if (router != null && modifiers and GLFW_MOD_CONTROL == 0) {
             router.key(key, scancode, action, modifiers)
             return@glfwSetKeyCallback
@@ -475,6 +476,7 @@ fun main(args: Array<String>) {
                     routerPlaced = true
                 }
                 router.clamp()
+                router.followKeyTarget()
                 compositor.pointerDirection = router.direction
             }
             val warp = if (aiming != null && photon != null && condition.reproject) { { aiming.warpPoses(photon) } } else null

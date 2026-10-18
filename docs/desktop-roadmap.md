@@ -263,9 +263,16 @@ settings and shortcuts. The simulator's dev server is a reference for several.
     loopback for the bridged origin only.
   - Working on macOS: the dock, launcher and menu connect, and launching
     Settings from the launcher opens it as a window with its bridge.
-  - Left: files, sockets and media backends; shortcuts; web windows' browser
-    chrome; Halone package apps and their origins; `halone dev`; the Linux
-    producer's OPEN, CLOSE, web root and script.
+  - Files: the shared `SharedFiles` and `FileServer` over the user's
+    folders (XDG user dirs on Linux), with picture thumbnails. Sockets: the
+    shared `Sockets`.
+  - Shortcuts: `ShortcutKeys`, moved out of `MainActivity` into
+    `core-shell`, takes GLFW keys on the desktop. Keys go to the scene's key
+    target as on Android, and the producer gives that page the keyboard
+    focus.
+  - Left: media; web windows' browser chrome; Halone package apps and their
+    origins; `halone dev`; the Linux producer's OPEN, CLOSE, web root and
+    script.
 
 ### 6. Plugin contract
 

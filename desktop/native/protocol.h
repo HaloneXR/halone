@@ -32,6 +32,8 @@ enum {
     SPIKE_INPUT_LEAVE = 5,
     SPIKE_INPUT_KEY_DOWN = 6,
     SPIKE_INPUT_KEY_UP = 7,
+    /* Keys now go to this panel: it takes the keyboard focus. */
+    SPIKE_INPUT_FOCUS = 8,
 };
 
 #ifdef __APPLE__

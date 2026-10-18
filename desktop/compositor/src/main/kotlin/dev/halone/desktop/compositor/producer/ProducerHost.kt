@@ -219,5 +219,6 @@ class ProducerHost(
         const val INPUT_LEAVE = 5
         const val INPUT_KEY_DOWN = 6
         const val INPUT_KEY_UP = 7
+        const val INPUT_FOCUS = 8
     }
 }

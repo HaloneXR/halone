@@ -8,16 +8,25 @@ import dev.halone.desktop.compositor.render.DesktopCompositor
 import dev.halone.desktop.compositor.render.DesktopPanel
 import dev.halone.desktop.compositor.vk.TextureSource
 import dev.halone.desktop.shell.BridgeSockets
+import dev.halone.desktop.shell.DesktopFolders
+import dev.halone.desktop.shell.DesktopStorageAccess
+import dev.halone.desktop.shell.DesktopThumbnails
 import dev.halone.desktop.shell.FileStore
 import dev.halone.shell.AppInfo
 import dev.halone.shell.BridgeHost
+import dev.halone.shell.FileServer
+import dev.halone.shell.KeyChord
+import dev.halone.shell.SharedFiles
 import dev.halone.shell.Shell
 import dev.halone.shell.ShellPlatform
 import dev.halone.shell.ShellSettings
+import dev.halone.shell.ShortcutKeys
+import dev.halone.shell.Shortcuts
+import dev.halone.shell.Sockets
 import dev.halone.shell.SystemInfo
 import dev.halone.shell.applyTo
-import org.lwjgl.glfw.GLFW.glfwGetClipboardString
-import org.lwjgl.glfw.GLFW.glfwSetClipboardString
+import dev.halone.shell.runShortcut
+import org.lwjgl.glfw.GLFW.*
 import java.io.File
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.Executors
@@ -57,6 +66,10 @@ class DesktopShell(
         platform = this,
     )
 
+    private val files = SharedFiles(DesktopFolders::roots, DesktopStorageAccess)
+    private val fileServer = FileServer(files, thumbnailer = DesktopThumbnails()::of, log = log).also { files.urlBase = it.base }
+    private val tcp = Sockets(onMain = ::post)
+
     val bridge = BridgeHost(
         shell,
         SystemInfo(
@@ -68,9 +81,42 @@ class DesktopShell(
             platform = "desktop",
         ),
         log,
+        files = files,
         onMain = ::post,
         background = { background.execute(it) },
+        sockets = tcp,
     )
+
+    private val shortcuts = Shortcuts(File(webRoot, Shortcuts.ASSET).readText())
+
+    private val shortcutKeys = ShortcutKeys { chord ->
+        runCatching { shell.runShortcut(chord, shortcuts, scene.keyTarget, captureOn = false, log = log) }
+            .onFailure { log("  shortcut $chord failed: $it") }
+            .getOrDefault(true)
+    }
+
+    /** A GLFW key event; true when a shortcut takes it, so it goes no further. */
+    fun key(key: Int, action: Int, modifiers: Int): Boolean {
+        val meta = key == GLFW_KEY_LEFT_SUPER || key == GLFW_KEY_RIGHT_SUPER
+        val chord = chordOf(key)?.let {
+            KeyChord(it, ctrl = modifiers and GLFW_MOD_CONTROL != 0, alt = modifiers and GLFW_MOD_ALT != 0,
+                shift = modifiers and GLFW_MOD_SHIFT != 0, meta = modifiers and GLFW_MOD_SUPER != 0)
+        }
+        return shortcutKeys.onKey(key, meta, action != GLFW_RELEASE, action == GLFW_REPEAT, chord)
+    }
+
+    /** The keys `shortcuts.json` names, as MainActivity's chordOf names them. */
+    private fun chordOf(key: Int): String? = when (key) {
+        in GLFW_KEY_A..GLFW_KEY_Z -> ('A' + (key - GLFW_KEY_A)).toString()
+        in GLFW_KEY_F1..GLFW_KEY_F12 -> "F${key - GLFW_KEY_F1 + 1}"
+        GLFW_KEY_TAB -> "Tab"
+        GLFW_KEY_GRAVE_ACCENT -> "`"
+        GLFW_KEY_ESCAPE -> "Escape"
+        GLFW_KEY_PRINT_SCREEN -> "PrintScreen"
+        GLFW_KEY_LEFT -> "ArrowLeft"
+        GLFW_KEY_RIGHT -> "ArrowRight"
+        else -> null
+    }
 
     init {
         host.onPanelReady = { index, texture -> byProducer[index]?.texture = texture }
@@ -89,6 +135,7 @@ class DesktopShell(
         if (nowNs - lastPollNs >= POLL_NS) {
             lastPollNs = nowNs
             shell.poll()
+            bridge.checkFileAccess()
         }
         if (compositor.notice != null && nowNs >= noticeUntilNs) compositor.notice = null
     }
@@ -200,6 +247,7 @@ class DesktopShell(
     private fun fillFor(heightPx: Int) = PANEL_VERTICAL_FILL * heightPx / REFERENCE_HEIGHT_PX
 
     override fun close() {
+        fileServer.close()
         sockets.close()
         io.shutdown()
         background.shutdown()
