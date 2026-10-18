@@ -58,6 +58,9 @@ fun main(args: Array<String>) {
         }
         val video = glfwGetVideoMode(monitor)!!
         refreshHz = video.refreshRate()
+        // GLFW minimises a fullscreen window when it loses focus, which takes the
+        // scene off the glasses as soon as the wearer clicks anything on the Mac.
+        glfwWindowHint(GLFW_AUTO_ICONIFY, GLFW_FALSE)
         println("monitor: ${glfwGetMonitorName(monitor)} ${video.width()}x${video.height()} @${video.refreshRate()}")
         window = glfwCreateWindow(video.width(), video.height(), "Halone", monitor, 0)
     } else {

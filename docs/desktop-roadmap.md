@@ -137,6 +137,32 @@ abstraction that `SurfaceTexture` also implements on Android.
 - Retune `PresentTiming` and prediction for each OS's vsync and frame timing.
 - Exit: the scene from `fixtures/scene/golden` renders identically; panels
   follow head motion on the glasses without visible judder.
+- **In progress (2026-10-18), on Vulkan rather than GL.** `desktop/compositor`
+  uses LWJGL with MoltenVK on macOS (Vulkan 1.3 on an M4, with
+  `VK_EXT_metal_objects`, `VK_GOOGLE_display_timing` and present id/wait
+  available).
+  - The golden fixtures turned out to be numeric scene traces, not images.
+    They pass wherever `core-scene` runs, so they don't test the renderer.
+  - The pure math moved to a new plain-JVM module, `core-compositor-common`
+    (distortion mesh, reprojection, present timing). The renderer mirrors
+    `StereoCompositor`'s matrices and draw order for now. Pulling that frame
+    logic out of the GL code, so both backends share it, is a later change
+    for `main`.
+  - Done:
+    - Windowed mono with mouse-look, at 120 fps on a 120 Hz display.
+    - Side-by-side stereo on an Air 2 Pro, steady at 60 Hz: calibrated
+      per-eye frustums and poses, the factory distortion grid at 1.8%
+      overfill, `HeadTracker` for the pose, and SBS switched over HID with
+      mono restored on exit. Worn: fusion, scale, straight edges,
+      world-locking and level all looked right.
+    - Fixed: GLFW minimised the fullscreen window whenever the Mac's focus
+      moved, which took the scene off the glasses.
+  - Left:
+    - Reprojection and present timing (`VK_GOOGLE_display_timing`), then a
+      blind A/B against fixed-horizon prediction for judder.
+    - Panels from producers (IOSurfaces through `VK_EXT_metal_objects`).
+    - Chrome: frames, title bars, cursor and notices. Java2D can replace the
+      Android Canvas painters.
 
 ### 5. Shell and bridge
 
