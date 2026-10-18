@@ -1,6 +1,11 @@
 package dev.halone.desktop.compositor
 
 import dev.halone.compositor.PanelPose
+import dev.halone.desktop.compositor.producer.InputRouter
+import dev.halone.desktop.compositor.producer.PanelSpec
+import dev.halone.desktop.compositor.render.CursorPose
+import dev.halone.desktop.compositor.producer.ProducerHost
+import dev.halone.desktop.compositor.producer.ProducerTexture
 import dev.halone.desktop.compositor.render.DesktopCompositor
 import dev.halone.desktop.compositor.render.DesktopPanel
 import dev.halone.desktop.compositor.render.StereoRenderer
@@ -23,6 +28,7 @@ import kotlin.system.exitProcess
 private const val PANEL_VERTICAL_FILL = 0.75f
 private const val MOUSE_DEGREES_PER_PIXEL = 0.08f
 private const val PACE_TIMEOUT_NS = 100_000_000L
+private const val CURSOR_PX = 64
 
 /** How frames are paced, aimed and warped. */
 private data class Condition(
@@ -49,12 +55,41 @@ private class Options(args: Array<String>) {
         else -> SMOOTH
     }
     val ab = "--ab" in args
+    val producer = value(args, "--producer")
+    val producerPanels = args.indices.filter { args[it] == "--panel" }.mapNotNull { args.getOrNull(it + 1) }.map { PanelSpec.parse(it) }
+    val producerMarginMs = value(args, "--producer-margin")?.toFloat() ?: 10f
+    val producerLog = value(args, "--producer-log") ?: "producer.log"
+    val inputTest = "--input-test" in args
     val scanSweep = "--scan-sweep" in args
     val scanValues = value(args, "--scan-values")?.split(",")?.map { it.toFloat() } ?: listOf(1f, 0f, -1f)
     val reveal = value(args, "--reveal")
     val abSeconds = value(args, "--ab-interval")?.toDouble() ?: 8.0
 
     private fun value(args: Array<String>, name: String) = args.indexOf(name).takeIf { it >= 0 }?.let { args.getOrNull(it + 1) }
+}
+
+/**
+ * Drives the pointer through spike 2's test page (`site/spike/test.html`, 1280x720) the way the mouse
+ * and keyboard would: point at the button and click it, focus the field and type, scroll the list.
+ */
+private fun inputScript(): List<Pair<Double, (InputRouter, DesktopPanel) -> Unit>> {
+    val steps = mutableListOf<Pair<Double, (InputRouter, DesktopPanel) -> Unit>>()
+    steps += 0.0 to { r, p -> r.pointAt(p, 100f, 100f) }
+    steps += 0.3 to { r, p -> r.pointAt(p, 265f, 505f) }
+    steps += 0.6 to { r, _ -> r.button(0, true, 0, 0.6) }
+    steps += 0.65 to { r, _ -> r.button(0, false, 0, 0.65) }
+    steps += 1.0 to { r, p -> r.pointAt(p, 117f, 505f) }
+    steps += 1.1 to { r, _ -> r.button(0, true, 0, 1.1) }
+    steps += 1.15 to { r, _ -> r.button(0, false, 0, 1.15) }
+    val keys = listOf(GLFW_KEY_H to 4, GLFW_KEY_E to 14, GLFW_KEY_L to 37, GLFW_KEY_L to 37, GLFW_KEY_O to 31)
+    keys.forEachIndexed { i, (key, scancode) ->
+        val at = 1.5 + i * 0.1
+        steps += at to { r, _ -> r.key(key, scancode, GLFW_PRESS, 0); r.character("hello"[i].code, 0) }
+        steps += at + 0.05 to { r, _ -> r.key(key, scancode, GLFW_RELEASE, 0) }
+    }
+    steps += 2.3 to { r, p -> r.pointAt(p, 324f, 601f) }
+    steps += 2.4 to { r, _ -> r.scroll(0.0, -3.0, 0) }
+    return steps
 }
 
 /** The Air 2 Pro's optics, from the driver's own model table, so the window shows what the glasses would. */
@@ -93,6 +128,7 @@ fun main(args: Array<String>) {
         glfwFocusWindow(window)
     } else {
         window = glfwCreateWindow(1600, 900, "Halone", 0, 0)
+        glfwFocusWindow(window)
     }
 
     val blind = options.ab || options.scanSweep
@@ -143,7 +179,18 @@ fun main(args: Array<String>) {
         compositor.forget(panel.texture)
         panel.texture.close()
     }
-    repeat(3) { openPanel() }
+    val host = options.producer?.let { executable ->
+        ProducerHost(vk, executable, options.producerPanels, options.producerMarginMs, File(options.producerLog)).also { host ->
+            host.onPanelReady = { index, texture ->
+                val spec = options.producerPanels[index]
+                val panel = DesktopPanel("producer-$index", spec.width, spec.height, texture, PanelPose(distanceMetres = optics.virtualImageDistanceMetres))
+                panel.fitToFov(verticalFov, PANEL_VERTICAL_FILL)
+                compositor.scene.open(panel)
+                println("producer panel $index ready: ${spec.width}x${spec.height} ${spec.url}")
+            }
+        }
+    }
+    if (host == null) repeat(3) { openPanel() }
 
     val aim = session?.displayClock?.let { FrameAim(it, session.tracker) }
 
@@ -179,25 +226,55 @@ fun main(args: Array<String>) {
     var lastX = Double.NaN
     var lastY = Double.NaN
     glfwSetFramebufferSizeCallback(window) { _, _, _ -> loop.onResize() }
-    glfwSetMouseButtonCallback(window) { w, _, action, _ ->
-        if (session == null && action == GLFW_PRESS && !captured) {
+    var headYawRadians = 0f
+    var headPitchRadians = 0f
+    var mods = 0
+    val halfPitch = Math.toRadians(verticalFov / 2.0)
+    val router = host?.let {
+        InputRouter(it, compositor.scene, kotlin.math.atan(kotlin.math.tan(halfPitch) * 16.0 / 9.0).toFloat(), halfPitch.toFloat())
+    }
+    if (router != null) {
+        compositor.cursorTexture = StaticTexture(vk, CURSOR_PX, CURSOR_PX, TestPattern.cursor(CURSOR_PX))
+        captured = true
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED)
+        if (glfwRawMouseMotionSupported()) glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE)
+        println("pointer: mouse moves it, Ctrl+R recentres, Ctrl+Q quits, Ctrl+Esc releases the mouse; window focused ${glfwGetWindowAttrib(window, GLFW_FOCUSED) == GLFW_TRUE}")
+    }
+    glfwSetMouseButtonCallback(window) { w, button, action, modifiers ->
+        mods = modifiers
+        if (!captured && action == GLFW_PRESS) {
             captured = true
             lastX = Double.NaN
             glfwSetInputMode(w, GLFW_CURSOR, GLFW_CURSOR_DISABLED)
+            return@glfwSetMouseButtonCallback
         }
+        router?.button(button, action == GLFW_PRESS, modifiers, glfwGetTime())
     }
     glfwSetCursorPosCallback(window) { _, x, y ->
         if (captured && !lastX.isNaN()) {
-            yaw -= ((x - lastX) * MOUSE_DEGREES_PER_PIXEL).toFloat()
-            pitch = (pitch - ((y - lastY) * MOUSE_DEGREES_PER_PIXEL).toFloat()).coerceIn(-80f, 80f)
+            if (router != null) {
+                router.move(x - lastX, y - lastY, headYawRadians, headPitchRadians, mods)
+            } else {
+                yaw -= ((x - lastX) * MOUSE_DEGREES_PER_PIXEL).toFloat()
+                pitch = (pitch - ((y - lastY) * MOUSE_DEGREES_PER_PIXEL).toFloat()).coerceIn(-80f, 80f)
+            }
         }
         lastX = x
         lastY = y
     }
-    glfwSetKeyCallback(window) { w, key, _, action, _ ->
+    glfwSetScrollCallback(window) { _, dx, dy -> router?.scroll(dx, dy, mods) }
+    glfwSetWindowFocusCallback(window) { _, focused -> println("focus ${if (focused) "gained" else "lost"}") }
+    glfwSetCharCallback(window) { _, codepoint -> router?.character(codepoint, mods) }
+    glfwSetKeyCallback(window) { w, key, scancode, action, modifiers ->
+        mods = modifiers
+        if (router != null && modifiers and GLFW_MOD_CONTROL == 0) {
+            router.key(key, scancode, action, modifiers)
+            return@glfwSetKeyCallback
+        }
         if (action != GLFW_PRESS) return@glfwSetKeyCallback
         when (key) {
-            GLFW_KEY_ESCAPE -> if (session != null) {
+            GLFW_KEY_Q -> if (router != null) glfwSetWindowShouldClose(w, true)
+            GLFW_KEY_ESCAPE -> if (session != null && router == null) {
                 glfwSetWindowShouldClose(w, true)
             } else {
                 captured = false
@@ -208,6 +285,7 @@ fun main(args: Array<String>) {
                 pitch = 0f
                 session?.tracker?.recenter()
                 compositor.scene.recentre()
+                router?.recentre(0f, 0f)
             }
             GLFW_KEY_N -> openPanel()
             GLFW_KEY_BACKSPACE -> closePanel()
@@ -220,6 +298,9 @@ fun main(args: Array<String>) {
             }
         }
     }
+
+    var scriptStart = 0.0
+    val script = ArrayDeque(inputScript())
 
     val frameMs = 1000f / refreshHz
     val start = glfwGetTime()
@@ -251,6 +332,7 @@ fun main(args: Array<String>) {
             worstMs = maxOf(worstMs, dt * 1000.0)
             lastSampleNs = sampleNs
             val id = loop.lastPresentId + 1
+            host?.update(id)
             sampleById[id] = sampleNs
             probe.sampled(id, sampleNs)
             val aiming = aim?.takeIf { condition.aimed && it.ready }
@@ -262,10 +344,25 @@ fun main(args: Array<String>) {
             }
             if (photon != null) probe.aimed(id, photon)
             compositor.advance(head, dt)
+            val (headYawDegrees, headPitchDegrees, _) = head.toEulerDegrees()
+            headYawRadians = Math.toRadians(headYawDegrees.toDouble()).toFloat()
+            headPitchRadians = Math.toRadians(headPitchDegrees.toDouble()).toFloat()
+            if (router != null) {
+                router.refreshHit()
+                compositor.cursor = CursorPose(router.yawRadians, router.pitchRadians, router.hitDistanceMetres ?: optics.virtualImageDistanceMetres)
+            }
             val warp = if (aiming != null && photon != null && condition.reproject) { { aiming.warpPoses(photon) } } else null
             compositor.record(target, head, warp)
+            host?.tick(sampleNs + (if (refreshNs > 0) refreshNs else (1e9 / refreshHz).toLong()))
         }
         if (drawn) frames++
+        if (options.inputTest && router != null) {
+            val page = compositor.scene.find("producer-1")
+            if (page != null && page.texture.ready) {
+                if (scriptStart == 0.0) scriptStart = now + 3.0
+                while (script.isNotEmpty() && now >= scriptStart + script.first().first) script.removeFirst().second(router, page)
+            }
+        }
         if (sampleById.size > 512) sampleById.keys.sorted().take(256).forEach { sampleById.remove(it) }
         if (now >= reportAt) {
             refreshNs = loop.refreshDurationNs()
@@ -275,6 +372,10 @@ fun main(args: Array<String>) {
                 frames / (now - reportAt + 2), worstMs, headYaw, headPitch, aim?.refreshesAhead ?: "-",
                 compositor.scene.panels.joinToString { "%.1f°".format(Math.toDegrees(it.pose.yawRadians.toDouble())) }))
             if (!blind) println(probe.report(refreshNs)) else probe.report(refreshNs)
+            host?.let { h ->
+                val counts = h.takeFrameCounts()
+                println("producer: ${if (h.alive) "running" else "exited"}, new frames per 2 s ${options.producerPanels.indices.joinToString { "$it: ${counts[it] ?: 0}" }}")
+            }
             if (!blind) println("blocking: pace wait %.2f, prime %.2f, submit %.2f, present %.2f ms per frame".format(
                 paceWaitNs / 1e6 / maxOf(frames, 1), loop.primeBlockNs / 1e6 / maxOf(frames, 1),
                 loop.submitBlockNs / 1e6 / maxOf(frames, 1), loop.presentBlockNs / 1e6 / maxOf(frames, 1)))
@@ -294,7 +395,9 @@ fun main(args: Array<String>) {
         options.reveal?.let { File(it).writeText(mapping) } ?: println("reveal: $mapping")
     }
     vkDeviceWaitIdle(vk.device)
-    compositor.scene.panels.forEach { it.texture.close() }
+    host?.close()
+    compositor.scene.panels.filter { it.texture !is ProducerTexture }.forEach { it.texture.close() }
+    compositor.cursorTexture?.close()
     compositor.close()
     loop.close()
     vk.close()

@@ -32,8 +32,13 @@ class DesktopPanel(
  * The desktop counterpart of StereoCompositor, mono for now: steps the scene's
  * follow, then draws its panels in draw order with the same model matrices.
  */
+/** Where the pointer is drawn: a direction and how far along it. */
+data class CursorPose(val yawRadians: Float, val pitchRadians: Float, val distanceMetres: Float)
+
 class DesktopCompositor(private val vk: VulkanContext, colorFormat: Int, val verticalFovDegrees: Float) : AutoCloseable {
     var stereo: StereoRenderer? = null
+    var cursorTexture: TextureSource? = null
+    var cursor: CursorPose? = null
 
     val scene = PanelScene<DesktopPanel>()
     private val panels = PanelPipeline(vk, colorFormat)
@@ -77,6 +82,7 @@ class DesktopCompositor(private val vk: VulkanContext, colorFormat: Int, val ver
     fun drawScene(cmd: VkCommandBuffer, viewProjection: FloatArray) {
         panels.bind(cmd)
         for (panel in scene.drawOrder()) {
+            if (!panel.texture.ready) continue
             val pose = panel.pose
             var model = Mat4.multiply(Mat4.rotationY(pose.yawRadians), Mat4.rotationX(pose.pitchRadians))
             model = Mat4.multiply(model, Mat4.translation(0f, 0f, -pose.distanceMetres))
@@ -84,9 +90,25 @@ class DesktopCompositor(private val vk: VulkanContext, colorFormat: Int, val ver
             val mvp = Mat4.multiply(viewProjection, model)
             panels.draw(cmd, panel.texture, mvp, panel.widthPx.toFloat(), panel.heightPx.toFloat(), panel.cornerRadiusPx, 1f)
         }
+        val pointer = cursor
+        val ring = cursorTexture
+        if (pointer != null && ring != null) {
+            val distance = pointer.distanceMetres - CURSOR_LIFT_METRES
+            val size = CURSOR_RADIANS * distance
+            var model = Mat4.multiply(Mat4.rotationY(pointer.yawRadians), Mat4.rotationX(pointer.pitchRadians))
+            model = Mat4.multiply(model, Mat4.translation(0f, 0f, -distance))
+            model = Mat4.multiply(model, Mat4.scale(size, size, 1f))
+            val px = ring.widthPx.toFloat()
+            panels.draw(cmd, ring, Mat4.multiply(viewProjection, model), px, px, px / 2f, 1f)
+        }
     }
 
     fun forget(texture: TextureSource) = panels.forget(texture.view)
+
+    private companion object {
+        const val CURSOR_RADIANS = 0.014f
+        const val CURSOR_LIFT_METRES = 0.02f
+    }
 
     override fun close() {
         stereo?.close()

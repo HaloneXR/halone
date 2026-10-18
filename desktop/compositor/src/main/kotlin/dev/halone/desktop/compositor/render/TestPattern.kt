@@ -31,6 +31,26 @@ object TestPattern {
         g.font = Font(Font.SANS_SERIF, Font.PLAIN, height / 24)
         g.drawString("${width}x$height", 24, height - 24)
         g.dispose()
+        return bytesOf(image)
+    }
+
+    /** The pointer: a white ring with a dark edge, so it reads over light and dark content alike. */
+    fun cursor(size: Int): ByteBuffer {
+        val image = BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB_PRE)
+        val g = image.createGraphics()
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+        val ring = size * 0.14f
+        g.stroke = BasicStroke(ring + size * 0.08f)
+        g.color = Color(0, 0, 0, 160)
+        g.drawOval((size * 0.2).toInt(), (size * 0.2).toInt(), (size * 0.6).toInt(), (size * 0.6).toInt())
+        g.stroke = BasicStroke(ring)
+        g.color = Color.WHITE
+        g.drawOval((size * 0.2).toInt(), (size * 0.2).toInt(), (size * 0.6).toInt(), (size * 0.6).toInt())
+        g.dispose()
+        return bytesOf(image)
+    }
+
+    private fun bytesOf(image: BufferedImage): ByteBuffer {
         val ints = (image.raster.dataBuffer as DataBufferInt).data
         val bytes = ByteBuffer.allocateDirect(ints.size * 4).order(ByteOrder.LITTLE_ENDIAN)
         bytes.asIntBuffer().put(ints)

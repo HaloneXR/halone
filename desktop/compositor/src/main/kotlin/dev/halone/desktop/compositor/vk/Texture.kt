@@ -21,6 +21,7 @@ interface TextureSource : AutoCloseable {
     val view: Long
     val widthPx: Int
     val heightPx: Int
+    val ready: Boolean get() = true
 }
 
 /** A device-local BGRA image filled once from CPU pixels. */

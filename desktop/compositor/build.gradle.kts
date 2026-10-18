@@ -24,10 +24,27 @@ val lwjglNatives = when {
     else -> if (arch == "aarch64") "natives-linux-arm64" else "natives-linux"
 }
 
+val nativeBridge = tasks.register<Exec>("nativeBridge") {
+    val source = rootProject.layout.projectDirectory.dir("desktop/native")
+    val output = layout.buildDirectory.file("native/darwin-aarch64/libhalone_bridge.dylib")
+    onlyIf { System.getProperty("os.name").lowercase().contains("mac") }
+    inputs.dir(source)
+    outputs.file(output)
+    commandLine(
+        "clang", "-dynamiclib", "-O2", "-Wall", "-arch", "arm64",
+        "-o", output.get().asFile.path, source.file("bridge.c").asFile.path,
+        "-framework", "IOSurface", "-framework", "CoreFoundation",
+    )
+    doFirst { output.get().asFile.parentFile.mkdirs() }
+}
+sourceSets.main { resources.srcDir(layout.buildDirectory.dir("native")) }
+tasks.processResources { dependsOn(nativeBridge) }
+
 dependencies {
     implementation(project(":core-glasses"))
     implementation(project(":core-compositor-common"))
     implementation(project(":desktop-glasses"))
+    implementation(libs.jna) { version { strictly(libs.versions.jna.get()) } }
     implementation(libs.lwjgl)
     implementation(libs.lwjgl.glfw)
     implementation(libs.lwjgl.vulkan)
