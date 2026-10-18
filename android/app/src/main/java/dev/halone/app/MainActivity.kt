@@ -17,10 +17,12 @@ import android.widget.FrameLayout
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import dev.halone.compositor.ChromePress
 import dev.halone.compositor.CursorStyle
 import dev.halone.compositor.HitPart
 import dev.halone.compositor.ImmersiveLayer
 import dev.halone.compositor.Panel
+import dev.halone.compositor.Scene
 import dev.halone.compositor.SceneHit
 import dev.halone.compositor.TouchPhase
 import dev.halone.display.DisplayProbe
@@ -1469,76 +1471,54 @@ class MainActivity : AppCompatActivity() {
     /** Native yaw of a direction, positive left, as panel poses use. */
     private fun yawOf(direction: Vec3) = kotlin.math.atan2(-direction.x, -direction.z)
 
-    /** What a press on a title bar is holding: the window it picked up, or a button. */
-    private var chromePress: SceneHit? = null
+    private var chrome: ChromePress<Panel>? = null
+    private var chromeScene: Scene? = null
 
-    private var chromePressAim: Vec3? = null
+    /** Presses on window chrome, the same code the desktop uses; one per scene, which a new stereo session replaces. */
+    private fun chrome(scene: Scene): ChromePress<Panel> {
+        if (chromeScene !== scene) {
+            chromeScene = scene
+            chrome = ChromePress(scene, chromeActions)
+        }
+        return chrome!!
+    }
 
-    /**
-     * A press on the bar picks the window up at once, so a drag carries it from
-     * the first movement; a press that never moves is a click and is undone on
-     * release. A press on a button only counts if it is released on it.
-     */
+    private val chromeActions = object : ChromePress.Actions<Panel> {
+        override fun resizeContent(panel: Panel, widthPx: Int, heightPx: Int) = panel.engine.resize(widthPx, heightPx)
+
+        override fun pin(panel: Panel, pinned: Boolean): Boolean {
+            val shell = shellSession?.shell ?: return false
+            return runCatching { shell.setPinned(panel.id, pinned) }.isSuccess
+        }
+
+        override fun back(panel: Panel) = panel.engine.dispatchBack()
+
+        override fun close(panel: Panel) {
+            val shell = shellSession?.shell
+            if (shell != null && runCatching { shell.close(panel.id) }.isSuccess) return
+            stereoSession?.closePanel(panel)
+        }
+
+        override fun dropped(panel: Panel) = logDropped(panel)
+
+        override fun resized(panel: Panel, oldWidthPx: Int, oldHeightPx: Int) =
+            logLine("  resized '${panel.id}' ${oldWidthPx}x$oldHeightPx -> ${panel.widthPx}x${panel.heightPx}")
+    }
+
     private fun pressOnChrome(hit: SceneHit) {
         val session = stereoSession ?: return
         val compositor = session.compositor ?: return
-        chromePress = hit
-        chromePressAim = compositor.lastAim
-        if (hit.part == HitPart.TITLE_BAR && session.scene.grabbed == null) {
-            session.scene.beginGrab(hit.panel, compositor.lastAim)
-        }
-        hit.part.corner?.let { session.scene.beginResize(hit.panel, it) }
+        chrome(session.scene).press(hit, compositor.lastAim)
     }
 
-    /** Ends a press that began on a title bar; false if there was none. */
+    /** Ends a press that began on a window's chrome; false if there was none. */
     private fun releaseOnChrome(): Boolean {
-        val press = chromePress ?: return false
-        chromePress = null
-        val session = stereoSession ?: return true
-        val compositor = session.compositor ?: return true
-        if (press.part == HitPart.TITLE_BAR) {
-            if (session.scene.grabbed !== press.panel) return true
-            if (degreesBetween(chromePressAim, compositor.lastAim) < CLICK_SLOP_DEGREES) session.scene.cancelGrab()
-            else dropPanel()
+        val chrome = chrome?.takeIf { it.active } ?: return false
+        val compositor = stereoSession?.compositor ?: run {
+            chrome.abandon()
             return true
         }
-        if (press.part.corner != null) {
-            val drag = session.scene.endResize() ?: return true
-            val panel = drag.panel
-            val oldWidth = panel.widthPx
-            val oldHeight = panel.heightPx
-            if (drag.widthPx == oldWidth && drag.heightPx == oldHeight) return true
-            panel.engine.resize(drag.widthPx, drag.heightPx)
-            session.scene.resized(panel, oldWidth, oldHeight, drag.corner.opposite)
-            logLine("  resized '${panel.id}' ${oldWidth}x$oldHeight -> ${panel.widthPx}x${panel.heightPx}")
-            return true
-        }
-        val now = compositor.lastHit
-        if (now?.panel === press.panel && now.part == press.part) activateChrome(press.panel, press.part)
-        return true
-    }
-
-    private fun activateChrome(panel: Panel, part: HitPart) {
-        val shell = shellSession?.shell
-        when (part) {
-            HitPart.PIN -> {
-                val pinned = panel.follow.enabled
-                if (shell != null && runCatching { shell.setPinned(panel.id, pinned) }.isSuccess) return
-                stereoSession?.scene?.setFollow(panel, panel.follow.copy(enabled = !pinned))
-            }
-            HitPart.BACK -> panel.engine.dispatchBack()
-            HitPart.CLOSE -> {
-                if (shell != null && runCatching { shell.close(panel.id) }.isSuccess) return
-                stereoSession?.closePanel(panel)
-            }
-            else -> Unit
-        }
-    }
-
-    private fun degreesBetween(a: Vec3?, b: Vec3?): Float {
-        if (a == null || b == null || a.length < 1e-6f || b.length < 1e-6f) return 0f
-        val cos = (a.x * b.x + a.y * b.y + a.z * b.z) / (a.length * b.length)
-        return Math.toDegrees(kotlin.math.acos(cos.coerceIn(-1f, 1f)).toDouble()).toFloat()
+        return chrome.release(compositor.lastAim, compositor.lastHit, compositor.headYawRadians)
     }
 
     /**
@@ -1550,7 +1530,7 @@ class MainActivity : AppCompatActivity() {
      */
     private fun tapAtHit(hit: SceneHit, label: String) {
         if (hit.part != HitPart.CONTENT) {
-            activateChrome(hit.panel, hit.part)
+            stereoSession?.scene?.let { chrome(it).activate(hit.panel, hit.part) }
             return
         }
         val engine = hit.panel.engine
@@ -1735,6 +1715,10 @@ class MainActivity : AppCompatActivity() {
         val compositor = session.compositor ?: run { logLine("not in stereo"); return }
         val panel = session.scene.endGrab(compositor.headYawRadians)
             ?: run { logLine("  not holding anything"); return }
+        logDropped(panel)
+    }
+
+    private fun logDropped(panel: Panel) {
         logLine("  dropped '${panel.id}' at %+.0f°, slot %+.0f°%s".format(
             Math.toDegrees(panel.pose.yawRadians.toDouble()),
             Math.toDegrees(panel.slotYawRadians.toDouble()),
@@ -2188,7 +2172,6 @@ class MainActivity : AppCompatActivity() {
         private val ROTATE_RADIANS_PER_PX = Math.toRadians(0.15).toFloat()
 
         /** Less pointer travel than this between press and release on a title bar is a click. */
-        const val CLICK_SLOP_DEGREES = 1f
         const val CONNECT_TIMEOUT_MS = 60_000L
         const val STEREO_TIMEOUT_MS = 20_000L
         const val TAP_RECORD_SECONDS = 240
