@@ -22,6 +22,9 @@ import java.nio.ByteBuffer
 /** Something a panel can be drawn from: a sampled image view, ready in SHADER_READ_ONLY_OPTIMAL. */
 interface TextureSource : AutoCloseable {
     val view: Long
+
+    /** Every view [view] can be, for forgetting what was cached against each when the texture goes. */
+    val views: List<Long> get() = listOf(view)
     val widthPx: Int
     val heightPx: Int
     val ready: Boolean get() = true

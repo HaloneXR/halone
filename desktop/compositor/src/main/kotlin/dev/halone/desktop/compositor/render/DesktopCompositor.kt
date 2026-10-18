@@ -308,7 +308,7 @@ class DesktopCompositor(private val vk: VulkanContext, colorFormat: Int, val ver
         }
     }
 
-    fun forget(texture: TextureSource) = panels.forget(texture.view)
+    fun forget(texture: TextureSource) = texture.views.forEach(panels::forget)
 
     override fun close() {
         stereo?.close()

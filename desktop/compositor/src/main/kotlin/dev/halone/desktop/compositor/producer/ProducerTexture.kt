@@ -12,12 +12,14 @@ class ProducerTexture(private val vk: VulkanContext, val surfaces: ProducerSurfa
     override val heightPx = surfaces.height
     private val images = LongArray(surfaces.count)
     private val memories = LongArray(surfaces.count)
-    private val views = LongArray(surfaces.count)
+    private val ringViews = LongArray(surfaces.count)
 
     /** The surface the panel shows; -1 until the producer's first frame. */
     var current = -1
 
-    override val view: Long get() = views[current.coerceAtLeast(0)]
+    override val view: Long get() = ringViews[current.coerceAtLeast(0)]
+
+    override val views: List<Long> get() = ringViews.toList()
 
     override val ready: Boolean get() = current >= 0
 
@@ -26,7 +28,7 @@ class ProducerTexture(private val vk: VulkanContext, val surfaces: ProducerSurfa
             val (image, memory) = surfaces.import(vk, i)
             images[i] = image
             memories[i] = memory
-            views[i] = StaticTexture.createView(vk, image)
+            ringViews[i] = StaticTexture.createView(vk, image)
         }
         StaticTexture.oneShot(vk) { cmd ->
             for (image in images) {
@@ -38,7 +40,7 @@ class ProducerTexture(private val vk: VulkanContext, val surfaces: ProducerSurfa
 
     override fun close() {
         for (i in images.indices) {
-            vkDestroyImageView(vk.device, views[i], null)
+            vkDestroyImageView(vk.device, ringViews[i], null)
             vkDestroyImage(vk.device, images[i], null)
             vkFreeMemory(vk.device, memories[i], null)
         }
