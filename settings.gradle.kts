@@ -23,10 +23,15 @@ dependencyResolutionManagement {
 
 rootProject.name = "halone"
 
+// -Phalone.desktopOnly builds the desktop modules and the plain JVM ones they use,
+// so a machine without the Android SDK can build them.
+val desktopOnly = providers.gradleProperty("halone.desktopOnly").map { it != "false" }.getOrElse(false)
+
 // dev.halone:plugin-sdk, built from the sdk submodule: the shell is the other side of its protocol.
-includeBuild("sdk/android")
+if (!desktopOnly) includeBuild("sdk/android")
 
 // Layers, bottom up. No module depends on one above it.
+val androidModules = setOf("core-glasses-usb", "core-display", "core-compositor", "engine-webview", "engine-plugin", "core-shell", "app")
 listOf(
     "core-scene",
     "core-glasses",
@@ -38,7 +43,7 @@ listOf(
     "engine-plugin",
     "core-shell",
     "app",
-).forEach { name ->
+).filter { !desktopOnly || it !in androidModules }.forEach { name ->
     include(":$name")
     project(":$name").projectDir = file("android/$name")
 }

@@ -63,6 +63,32 @@ with its own permissions. On desktop it runs as the user and can do anything
 the user can. Web apps keep their permission model everywhere, so the line is:
 web apps are sandboxed, native plugins are trusted and installed deliberately.
 
+## Building and running
+
+The desktop needs JDK 17 and a Vulkan driver (MoltenVK ships inside LWJGL on
+macOS; Mesa or the vendor driver elsewhere). `-Phalone.desktopOnly` leaves out
+the Android modules and the SDK's composite build, so no Android SDK is
+needed. To make it the default on a machine, add `halone.desktopOnly=true` to
+`~/.gradle/gradle.properties`.
+
+```sh
+./gradlew -Phalone.desktopOnly :desktop-glasses:installDist :desktop-compositor:installDist
+desktop/glasses/build/install/glasses-probe/bin/glasses-probe list      # or: track [seconds]
+desktop/compositor/build/install/halone-desktop/bin/halone-desktop      # windowed, mouse-look
+desktop/compositor/build/install/halone-desktop/bin/halone-desktop --glasses
+```
+
+On Linux, the glasses' HID interfaces need a udev rule before a user process
+can open them; replug the glasses after adding it:
+
+```
+# /etc/udev/rules.d/70-xreal.rules
+KERNEL=="hidraw*", ATTRS{idVendor}=="3318", TAG+="uaccess"
+```
+
+Producer panels (`--producer`, see `desktop/compositor/run-with-producer.sh`)
+are macOS-only for now: they need IOSurfaces and Mach ports.
+
 ## Phases
 
 Each phase ends with something that can be run and a decision about whether to
