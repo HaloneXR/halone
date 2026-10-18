@@ -48,21 +48,35 @@ object DesktopStorageAccess : StorageAccess {
 }
 
 /**
- * Small JPEGs of pictures for the Files grid, cached in [AppData] by path,
- * size and modification time, as on Android. Videos and songs have none yet.
- * Any thread.
+ * Small JPEGs of pictures, videos and songs for the Files grid, cached in
+ * [AppData] by path, size and modification time, as on Android. [system] is
+ * the OS's own thumbnailer where there is one, as ThumbnailUtils is on
+ * Android: pictures turned upright, video frames, cover art. Without it,
+ * pictures are decoded here and the rest have none. Any thread.
  */
-class DesktopThumbnails {
+class DesktopThumbnails(private val system: ((File, Int, Float) -> ByteArray?)? = null) {
     private val cache = File(AppData.dir, "cache/thumbnails").apply { mkdirs() }
 
     fun of(file: File): ByteArray? {
-        if (!FileTypes.mimeTypeOf(file.name).orEmpty().startsWith("image/")) return null
+        val type = FileTypes.mimeTypeOf(file.name).orEmpty()
         val cached = File(cache, key(file) + ".jpg")
         if (cached.isFile) return cached.readBytes()
+        val bytes = when {
+            system != null -> system.invoke(file, if (type.startsWith("audio/")) COVER_PX else SIZE_PX, QUALITY)
+            type.startsWith("image/") -> decode(file)
+            else -> null
+        } ?: return null
+        val partial = File(cache, cached.name + ".part")
+        partial.writeBytes(bytes)
+        java.nio.file.Files.move(partial.toPath(), cached.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        return bytes
+    }
+
+    private fun decode(file: File): ByteArray? {
         val source = runCatching { ImageIO.read(file) }.getOrNull() ?: return null
         val scale = SIZE_PX.toDouble() / max(source.width, source.height)
         val image = if (scale >= 1.0) toRgb(source, source.width, source.height) else toRgb(source, (source.width * scale).toInt().coerceAtLeast(1), (source.height * scale).toInt().coerceAtLeast(1))
-        val bytes = ByteArrayOutputStream().use { out ->
+        return ByteArrayOutputStream().use { out ->
             val writer = ImageIO.getImageWritersByFormatName("jpeg").next()
             val param = writer.defaultWriteParam.apply {
                 compressionMode = ImageWriteParam.MODE_EXPLICIT
@@ -75,10 +89,6 @@ class DesktopThumbnails {
             writer.dispose()
             out.toByteArray()
         }
-        val partial = File(cache, cached.name + ".part")
-        partial.writeBytes(bytes)
-        java.nio.file.Files.move(partial.toPath(), cached.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
-        return bytes
     }
 
     private fun toRgb(source: BufferedImage, width: Int, height: Int): BufferedImage {
@@ -98,6 +108,7 @@ class DesktopThumbnails {
 
     private companion object {
         const val SIZE_PX = 320
+        const val COVER_PX = 640
         const val QUALITY = 0.82f
     }
 }

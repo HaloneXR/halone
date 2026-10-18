@@ -79,7 +79,9 @@ class DesktopShell(
     private val devServer = DevServer(devCommands::run, ::post, log)
 
     private val files = SharedFiles(DesktopFolders::roots, DesktopStorageAccess)
-    private val fileServer = FileServer(files, thumbnailer = DesktopThumbnails()::of, log = log).also { files.urlBase = it.base }
+    private val fileServer = FileServer(files, thumbnailer = DesktopThumbnails(DesktopSystem.thumbnailer)::of, log = log)
+        .also { files.urlBase = it.base }
+    private var lastBatteryNs = 0L
     private val tcp = Sockets(onMain = ::post)
 
     val bridge = BridgeHost(
@@ -144,6 +146,10 @@ class DesktopShell(
     /** Runs what other threads posted, and polls the shell a few times a second, as ShellSession does. */
     fun tick(nowNs: Long) {
         while (true) (queue.poll() ?: break).run()
+        if (lastBatteryNs == 0L || nowNs - lastBatteryNs >= BATTERY_NS) {
+            lastBatteryNs = nowNs
+            background.execute { DesktopSystem.battery()?.let { battery -> post { shell.setBattery(battery) } } }
+        }
         if (nowNs - lastPollNs >= POLL_NS) {
             lastPollNs = nowNs
             shell.poll()
@@ -294,6 +300,7 @@ class DesktopShell(
         const val EYE_WIDTH_PX = 1920
         const val EYE_HEIGHT_PX = 1080
         const val POLL_NS = 200_000_000L
+        const val BATTERY_NS = 30_000_000_000L
         const val NOTICE_NS = 2_500_000_000L
     }
 }
