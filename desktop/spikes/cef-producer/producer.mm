@@ -364,16 +364,21 @@ uint32_t ask(Panel *p, Prompt prompt, bool rememberable) {
 
 void answer(Prompt &prompt, bool allow, bool remember);
 
-/** Denies what [panel]'s page still waits on, as Android does when a page starts or its tab closes. */
+/**
+ * Denies what [panel]'s page still waits on, as Android does when a page starts or its tab closes. Each prompt
+ * leaves the map before it is answered: CEF calls OnDismissPermissionPrompt from inside Continue.
+ */
 void denyPrompts(uint32_t panel) {
-    for (auto it = gPrompts.begin(); it != gPrompts.end();) {
-        if (it->second.panel != panel) {
-            ++it;
-            continue;
-        }
-        answer(it->second, false, false);
-        sendPrompt(panel, it->first, "", "", SPIKE_PROMPT_GONE);
-        it = gPrompts.erase(it);
+    std::vector<uint32_t> ids;
+    for (auto &entry : gPrompts)
+        if (entry.second.panel == panel) ids.push_back(entry.first);
+    for (uint32_t id : ids) {
+        auto it = gPrompts.find(id);
+        if (it == gPrompts.end()) continue;
+        Prompt prompt = it->second;
+        gPrompts.erase(it);
+        answer(prompt, false, false);
+        sendPrompt(panel, id, "", "", SPIKE_PROMPT_GONE);
     }
 }
 
@@ -687,8 +692,9 @@ void answer(Prompt &prompt, bool allow, bool remember) {
 void handlePromptAnswer(const spike_prompt_answer &a) {
     auto it = gPrompts.find(a.prompt);
     if (it == gPrompts.end() || it->second.panel != a.panel) return;
-    answer(it->second, a.allow != 0, a.remember != 0);
+    Prompt prompt = it->second;
     gPrompts.erase(it);
+    answer(prompt, a.allow != 0, a.remember != 0);
 }
 
 void handleCommand(const spike_command &c) {
