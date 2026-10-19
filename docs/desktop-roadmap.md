@@ -437,9 +437,9 @@ regularly so the branch stays close.
 - **On KDE Plasma (Wayland), some letters can't be held down.** Plasma's
   default for a held key is to offer accented characters, and KWin then sends
   the release straight after the press to a window that, like GLFW's, has no
-  text-input support. Letters with accented forms (A, C, D, E, I, K, N, O, S,
-  U, Y, Z and more, depending on the layout) type once and never repeat or
-  stay held, while others (F, J, Q, V, W) behave normally. That breaks games
+  text-input support. Letters with accented forms type once and never repeat
+  or stay held (seen with A, D, E, K and Z on a US layout), while others (F,
+  J, Q, V, W) behave normally. That breaks games
   that read held keys, such as rhythm games on D, F, J and K.
   - Workaround: System Settings → Keyboard → when a key is held, choose to
     repeat it instead of showing accented characters. This applies to every
