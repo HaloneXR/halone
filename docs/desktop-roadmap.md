@@ -434,6 +434,23 @@ regularly so the branch stays close.
   - Android is not affected: its system WebView and GeckoView decode these
     formats through the platform.
 
+- **On KDE Plasma (Wayland), some letters can't be held down.** Plasma's
+  default for a held key is to offer accented characters, and KWin then sends
+  the release straight after the press to a window that, like GLFW's, has no
+  text-input support. Letters with accented forms (A, C, D, E, I, K, N, O, S,
+  U, Y, Z and more, depending on the layout) type once and never repeat or
+  stay held, while others (F, J, Q, V, W) behave normally. That breaks games
+  that read held keys, such as rhythm games on D, F, J and K.
+  - Workaround: System Settings → Keyboard → when a key is held, choose to
+    repeat it instead of showing accented characters. This applies to every
+    app on the desktop.
+  - Running the compositor's GLFW window on XWayland also avoids it, but it
+    is not done, since a raw keyboard mode is planned: it will read keys
+    directly, as Android's accessibility service does for global shortcuts,
+    and won't go through Plasma's handling of held keys.
+  - Typing text is not affected, and auto-repeated keys reach pages as
+    repeats (`KeyboardEvent.repeat`).
+
 ## Open questions
 
 - Packaging per OS, and whether to sign and notarize builds during the
