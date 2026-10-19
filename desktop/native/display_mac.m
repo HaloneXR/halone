@@ -28,10 +28,20 @@ int32_t halone_display_move(uint32_t display, int32_t x, int32_t y) {
     return CGCompleteDisplayConfiguration(config, kCGConfigureForSession) == kCGErrorSuccess ? 0 : -1;
 }
 
-int32_t halone_display_tuck(uint32_t display) {
+int32_t halone_display_corner(uint32_t display, int32_t *x, int32_t *y) {
     CGRect others = othersBounds(display);
     if (CGRectIsNull(others)) return -1;
-    return halone_display_move(display, (int32_t)CGRectGetMaxX(others), (int32_t)CGRectGetMaxY(others));
+    *x = (int32_t)CGRectGetMaxX(others);
+    *y = (int32_t)CGRectGetMaxY(others);
+    return 0;
+}
+
+int32_t halone_display_beside(uint32_t display, int32_t *x, int32_t *y) {
+    CGRect others = othersBounds(display);
+    if (CGRectIsNull(others)) return -1;
+    *x = (int32_t)CGRectGetMaxX(others);
+    *y = (int32_t)CGRectGetMinY(others);
+    return 0;
 }
 
 void halone_cursor_to_main(void) {

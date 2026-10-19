@@ -859,6 +859,10 @@ int main(int argc, char *argv[]) {
         dispatch_source_set_event_handler(term, ^{ CefQuitMessageLoop(); });
         dispatch_resume(term);
 
+        dispatch_source_t orphaned = dispatch_source_create(DISPATCH_SOURCE_TYPE_PROC, getppid(), DISPATCH_PROC_EXIT, dispatch_get_main_queue());
+        dispatch_source_set_event_handler(orphaned, ^{ CefQuitMessageLoop(); });
+        dispatch_resume(orphaned);
+
         CefRunMessageLoop();
         for (Panel *p : livePanels()) p->browser = nullptr;
         CefShutdown();

@@ -10,14 +10,10 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Where the glasses sit in the Mac's display arrangement. While Halone shows on them they
  * touch the other displays only at a corner, as XREAL's own app leaves them, so neither
- * the cursor nor a dragged window wanders onto them; they go back when Halone quits.
+ * the cursor nor a dragged window wanders onto them; they go back when the result is closed.
  */
 class MacDisplays private constructor(private val display: Int, private val x: Int, private val y: Int) : AutoCloseable {
     private val restored = AtomicBoolean()
-
-    init {
-        Runtime.getRuntime().addShutdownHook(Thread(::close))
-    }
 
     override fun close() {
         if (restored.compareAndSet(false, true)) native.halone_display_move(display, x, y)
@@ -27,7 +23,8 @@ class MacDisplays private constructor(private val display: Int, private val x: I
     private interface Bridge : Library {
         fun halone_display_origin(display: Int, x: IntByReference, y: IntByReference): Int
         fun halone_display_move(display: Int, x: Int, y: Int): Int
-        fun halone_display_tuck(display: Int): Int
+        fun halone_display_corner(display: Int, x: IntByReference, y: IntByReference): Int
+        fun halone_display_beside(display: Int, x: IntByReference, y: IntByReference): Int
         fun halone_cursor_to_main()
         fun halone_window_overscan(window: Long, display: Int, margin: Int): Int
     }
@@ -40,8 +37,13 @@ class MacDisplays private constructor(private val display: Int, private val x: I
             val display = glfwGetCocoaMonitor(monitor)
             val x = IntByReference()
             val y = IntByReference()
+            val cornerX = IntByReference()
+            val cornerY = IntByReference()
             if (native.halone_display_origin(display, x, y) != 0) return null
-            if (native.halone_display_tuck(display) != 0) return null
+            if (native.halone_display_corner(display, cornerX, cornerY) != 0) return null
+            // Still in the corner, from a run that was killed outright: they go back beside the others.
+            if (x.value == cornerX.value && y.value == cornerY.value && native.halone_display_beside(display, x, y) != 0) return null
+            if (native.halone_display_move(display, cornerX.value, cornerY.value) != 0) return null
             return MacDisplays(display, x.value, y.value)
         }
 

@@ -192,6 +192,8 @@ private fun run(args: Array<String>) {
     val isMac = System.getProperty("os.name").lowercase().contains("mac")
     var tucked: MacDisplays? = null
     var overscan = 0
+    // Killed or crashed, the glasses still go back to 2D and to their place among the displays.
+    if (session != null) Runtime.getRuntime().addShutdownHook(Thread { tucked?.close(); session.close() })
     fun saved(key: String) = runCatching { JSONObject(File(AppData.dir, "settings.json").readText()).optBoolean(key, false) }.getOrDefault(false)
     var rawKeyboardOn = isLinux && saved(RAW_KEYBOARD)
     var helper: LinuxHelper? = null

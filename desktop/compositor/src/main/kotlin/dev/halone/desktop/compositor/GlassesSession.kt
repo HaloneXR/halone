@@ -9,6 +9,7 @@ import dev.halone.glasses.api.preferredStereoMode
 import dev.halone.glasses.fusion.DisplayClock
 import dev.halone.glasses.fusion.HeadTracker
 import org.lwjgl.glfw.GLFW.*
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Connected glasses, their tracker, and the display they show up as. */
 class GlassesSession private constructor(
@@ -132,7 +133,10 @@ class GlassesSession private constructor(
         return null
     }
 
+    private val closed = AtomicBoolean()
+
     override fun close() {
+        if (!closed.compareAndSet(false, true)) return
         stopDevice()
         device.display?.let { display -> display.preferredMonoMode()?.let { runCatching { display.setMode(it) } } }
         glasses.shutdown()
