@@ -946,6 +946,8 @@ private:
 void createBrowser(Panel *p) {
     producer::serveOrigin(p->origin, p->root);
     producer::allowBridge(p->origin, p->script);
+    // On the start that installed the ad blocker, Chromium registers it only after the context is up.
+    if (p->isPrivate) producer::allowExtensionsInPrivate();
     CefWindowInfo info;
     info.SetAsWindowless(0);
     info.shared_texture_enabled = true;
