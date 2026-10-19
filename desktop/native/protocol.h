@@ -40,6 +40,9 @@ enum {
 };
 
 #define SPIKE_CURSOR_NAME_BYTES 32
+
+/* In an input's modifiers, beside AppKit's flags: a key down the OS repeated while the key is held. */
+#define SPIKE_MODIFIER_REPEAT (1u << 30)
 #define SPIKE_URL_BYTES 2048
 #define SPIKE_ORIGIN_BYTES 256
 #define SPIKE_SCRIPT_BYTES 4096

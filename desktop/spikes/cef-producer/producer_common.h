@@ -58,6 +58,7 @@ inline uint32_t cefModifiers(uint32_t flags, uint32_t buttons) {
     if (flags & (1u << 19)) m |= EVENTFLAG_ALT_DOWN;
     if (flags & (1u << 20)) m |= EVENTFLAG_COMMAND_DOWN;
     if (flags & (1u << 16)) m |= EVENTFLAG_CAPS_LOCK_ON;
+    if (flags & SPIKE_MODIFIER_REPEAT) m |= EVENTFLAG_IS_REPEAT;
     if (buttons & 1) m |= EVENTFLAG_LEFT_MOUSE_BUTTON;
     if (buttons & 2) m |= EVENTFLAG_RIGHT_MOUSE_BUTTON;
     if (buttons & 4) m |= EVENTFLAG_MIDDLE_MOUSE_BUTTON;

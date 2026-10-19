@@ -34,6 +34,7 @@ class InputRouter(
     private var lastClickButton = -1
     private var clicks = 0
     private var pendingKeyCode: Int? = null
+    private var pendingRepeat = false
     private val typed = HashMap<Int, Int>()
 
     val direction: Vec3 get() = cursor.direction()
@@ -185,10 +186,11 @@ class InputRouter(
                 if (special != null || glfwGetKeyName(key, scancode) == null || modifiers and (GLFW_MOD_CONTROL or GLFW_MOD_SUPER) != 0) {
                     val character = special ?: glfwGetKeyName(key, scancode)?.firstOrNull()?.code ?: 0
                     typed[scancode] = character
-                    host?.input(target, ProducerHost.INPUT_KEY_DOWN, 0f, 0f, modifiers = macFlags(modifiers),
+                    host?.input(target, ProducerHost.INPUT_KEY_DOWN, 0f, 0f, modifiers = macFlags(modifiers, action == GLFW_REPEAT),
                         keyCode = scancode, character = character, unmodified = character)
                 } else {
                     pendingKeyCode = scancode
+                    pendingRepeat = action == GLFW_REPEAT
                 }
             }
             GLFW_RELEASE -> {
@@ -204,7 +206,7 @@ class InputRouter(
         val keyCode = pendingKeyCode ?: return
         pendingKeyCode = null
         typed[keyCode] = codepoint
-        host?.input(target, ProducerHost.INPUT_KEY_DOWN, 0f, 0f, modifiers = macFlags(modifiers),
+        host?.input(target, ProducerHost.INPUT_KEY_DOWN, 0f, 0f, modifiers = macFlags(modifiers, pendingRepeat),
             keyCode = keyCode, character = codepoint, unmodified = codepoint)
     }
 
@@ -215,8 +217,11 @@ class InputRouter(
         const val WHEEL_PIXELS = 40.0
         const val DOUBLE_CLICK_SECONDS = 0.4
 
-        fun macFlags(glfw: Int): Int {
-            var flags = 0
+        /** SPIKE_MODIFIER_REPEAT in protocol.h. */
+        const val REPEAT_FLAG = 1 shl 30
+
+        fun macFlags(glfw: Int, repeat: Boolean = false): Int {
+            var flags = if (repeat) REPEAT_FLAG else 0
             if (glfw and GLFW_MOD_SHIFT != 0) flags = flags or (1 shl 17)
             if (glfw and GLFW_MOD_CONTROL != 0) flags = flags or (1 shl 18)
             if (glfw and GLFW_MOD_ALT != 0) flags = flags or (1 shl 19)
