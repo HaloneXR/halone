@@ -64,6 +64,16 @@ val writeVersion = tasks.register("writeVersion") {
     outputs.file(output)
     doLast { output.get().asFile.apply { parentFile.mkdirs() }.writeText(version) }
 }
+val helperLinux = tasks.register<Exec>("helperLinux") {
+    val source = rootProject.layout.projectDirectory.file("desktop/native/helper_linux.c")
+    val output = layout.buildDirectory.file("helper/halone-helper")
+    onlyIf { System.getProperty("os.name").lowercase().contains("linux") }
+    inputs.file(source)
+    outputs.file(output)
+    commandLine("cc", "-O2", "-Wall", "-Wextra", "-Werror", "-pthread", "-o", output.get().asFile.path, source.asFile.path)
+    doFirst { output.get().asFile.parentFile.mkdirs() }
+}
+distributions.main { contents { from(helperLinux) { into("bin") } } }
 sourceSets.main {
     resources.srcDir(layout.buildDirectory.dir("native"))
     resources.srcDir(layout.buildDirectory.dir("generated/version"))
