@@ -99,6 +99,11 @@ desktop/compositor/build/install/halone-desktop/bin/halone-desktop --glasses --l
 sudo tools/glasses-lease-edid.py reset     # back to a desktop monitor
 ```
 
+Or let Halone do it: with "Keep the glasses off the desktop" (Settings >
+Display) on, `--lease` patches them through halone-helper (one polkit prompt)
+for as long as Halone runs; `--force-lease` does the same whatever the
+setting says.
+
 Producer panels (`--producer`, see `desktop/compositor/run-with-producer.sh`)
 run on macOS (IOSurfaces over Mach ports) and Linux (DMA-BUFs over a Unix
 socket); building the producer is described in `desktop/spikes/cef-producer`.

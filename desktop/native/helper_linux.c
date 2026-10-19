@@ -34,7 +34,8 @@
 #define MAX_PATCHED 4
 #define HEARTBEAT_MS 1500
 #define SCAN_MS 1000
-#define UNPLUGGED_SCANS 2
+/* Disconnected this many scans (seconds) counts as unplugged: switching to 3D drops the link for a few. */
+#define UNPLUGGED_SCANS 10
 
 static volatile sig_atomic_t stopping = 0;
 

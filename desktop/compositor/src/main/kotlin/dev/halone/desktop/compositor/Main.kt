@@ -85,7 +85,9 @@ private class Options(args: Array<String>) {
     val seconds = value(args, "--seconds")?.toDouble()
     val sweep = "--sweep" in args
     val glasses = "--glasses" in args
-    val lease = "--lease" in args
+    /** --force-lease: lease the glasses, patching their EDID whatever the setting says. */
+    val forceLease = "--force-lease" in args
+    val lease = "--lease" in args || forceLease
     val condition = when (value(args, "--condition")) {
         "baseline" -> BASELINE
         else -> SMOOTH
@@ -193,7 +195,8 @@ private fun run(args: Array<String>) {
         if (helper?.alive != true) helper = if (isLinux) LinuxHelper.start() else null
         return helper
     }
-    if (session != null && options.lease && isLinux && saved(PATCH_GLASSES_EDID)) {
+    val patching = session != null && options.lease && isLinux && (options.forceLease || saved(PATCH_GLASSES_EDID))
+    if (patching) {
         // Patched from their 2D EDID, so before they go to 3D.
         if (session.leaveStereo()) println("glasses: back to 2D to be patched")
         helper()?.let { h ->
@@ -225,6 +228,8 @@ private fun run(args: Array<String>) {
             val leased = attempt.getOrElse {
                 session.close()
                 println("could not lease the glasses' display: ${it.message}")
+                if (!patching && isLinux) println("The glasses are not marked non-desktop, so the desktop keeps them. Turn on " +
+                    "\"Keep the glasses off the desktop\" in Settings > Display, or start with --force-lease to patch them for this run.")
                 exitProcess(1)
             }
             lease = leased
