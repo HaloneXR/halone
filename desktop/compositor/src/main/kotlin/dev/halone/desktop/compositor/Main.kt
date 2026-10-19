@@ -514,7 +514,7 @@ fun main(args: Array<String>) {
         shell.keyCapture = { helper?.holding == true }
         shell.onReleaseToDesktop = ::releaseToDesktop
         shell.onSettingChanged = { settings, key ->
-            fun value() = runCatching { settings.boolean(key) }.getOrDefault(false)
+            fun value() = settings.boolean(key)
             when (key) {
                 RAW_KEYBOARD -> {
                     rawKeyboardOn = isLinux && value()
