@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
-import type { SettingKey, Settings } from '@halone/sdk'
+import type { SettingKey, Settings, SystemInfo } from '@halone/sdk'
 import Dropdown from '../shared/Dropdown.vue'
 import Icon from '../shared/Icon.vue'
 import NoHost from '../shared/NoHost.vue'
@@ -8,15 +8,23 @@ import SystemPanel from '../shared/SystemPanel.vue'
 import KeyboardPanel from './KeyboardPanel.vue'
 import PluginsPanel from './PluginsPanel.vue'
 import AboutPanel from './AboutPanel.vue'
-import { onPhone, onRoute, useHost, useSettings } from '../shared/host'
+import { onPhone, onRoute, useHost, useSettings, useSystemInfo } from '../shared/host'
 
 type Rule = { type: 'boolean' } | { type: 'number'; min: number; max: number } | { type: 'enum'; values: string[] }
 
-type Item =
+type Os = NonNullable<SystemInfo['os']>
+
+type Item = (
   | { kind: 'toggle'; key: SettingKey; label: string; help: string }
   | { kind: 'slider'; key: SettingKey; label: string; help: string; step: number; format: (v: number) => string }
   | { kind: 'choice'; key: SettingKey; label: string; help: string; labels: Record<string, string>; style: 'segmented' | 'dropdown' }
   | { kind: 'action'; key: string; label: string; help: string; button: string; run: () => Promise<unknown> }
+) & {
+  /** Only on a desktop running one of these. */
+  os?: Os[]
+  /** What [help] says instead on a desktop. */
+  desktopHelp?: string
+}
 
 interface Group {
   title?: string
@@ -37,6 +45,7 @@ interface Section {
 
 const { halone, status, error } = useHost()
 const settings = useSettings(halone)
+const info = useSystemInfo(halone)
 const schema = ref<Record<string, Rule>>({})
 const message = ref<string | null>(null)
 const query = ref('')
@@ -230,6 +239,7 @@ const allSections: Section[] = [
             key: 'browser.adBlocker',
             label: 'Block ads and trackers',
             help: 'uBlock Origin, in every web window and private tab. Turning it on the first time downloads it.',
+            desktopHelp: 'uBlock Origin Lite, in every web window and private tab. Takes effect the next time Halone starts; the first time downloads it.',
           },
         ],
       },
@@ -264,6 +274,13 @@ const allSections: Section[] = [
       {
         items: [
           { kind: 'slider', key: 'display.brightness', label: 'Brightness', help: 'Glasses display brightness.', step: 0.05, format: (v) => `${Math.round(v * 100)}%` },
+          {
+            kind: 'toggle',
+            key: 'display.patchGlassesEdid',
+            label: 'Keep the glasses off the desktop',
+            help: 'Marks supported glasses as a headset rather than a monitor while Halone runs, so the desktop never puts windows on them, and puts them back after. Asks for your password once.',
+            os: ['linux'],
+          },
           {
             kind: 'slider',
             key: 'panel.distanceMetres',
@@ -494,21 +511,35 @@ async function set<K extends SettingKey>(key: K, value: Settings[K]) {
   }
 }
 
+/** The sections without what this platform has no use for. */
+const shownSections = computed(() =>
+  sections.map((section) => ({
+    ...section,
+    groups: section.groups
+      .map((group) => ({ ...group, items: group.items.filter((item) => !item.os || (info.value?.os != null && item.os.includes(info.value.os))) }))
+      .filter((group) => group.items.length > 0),
+  })),
+)
+
+function helpFor(item: Item) {
+  return info.value?.platform === 'desktop' && item.desktopHelp ? item.desktopHelp : item.help
+}
+
 const needle = computed(() => query.value.trim().toLowerCase())
 
 const visible = computed<{ section: Section; groups: Group[] }[]>(() => {
   if (!needle.value) {
-    const section = sections.find((s) => s.id === active.value) ?? sections[0]!
+    const section = shownSections.value.find((s) => s.id === active.value) ?? shownSections.value[0]!
     return [{ section, groups: section.groups }]
   }
-  return sections
+  return shownSections.value
     .map((section) => ({
       section,
       groups: section.groups
         .map((group) => ({
           ...group,
           items: group.items.filter((item) =>
-            [section.title, group.title ?? '', item.label, item.help].join(' ').toLowerCase().includes(needle.value),
+            [section.title, group.title ?? '', item.label, helpFor(item)].join(' ').toLowerCase().includes(needle.value),
           ),
         }))
         .filter((group) => group.items.length > 0),
@@ -528,7 +559,7 @@ const visible = computed<{ section: Section; groups: Group[] }[]>(() => {
       </label>
       <template v-if="!narrow || !needle">
         <button
-          v-for="section in sections"
+          v-for="section in shownSections"
           :key="section.id"
           class="nav-item"
           :class="{ active: !narrow && !needle && active === section.id }"
@@ -560,7 +591,7 @@ const visible = computed<{ section: Section; groups: Group[] }[]>(() => {
               <template v-if="item.kind === 'toggle'">
                 <span class="text">
                   <span class="label">{{ item.label }}</span>
-                  <span class="help x-muted">{{ item.help }}</span>
+                  <span class="help x-muted">{{ helpFor(item) }}</span>
                 </span>
                 <input
                   type="checkbox"
@@ -573,7 +604,7 @@ const visible = computed<{ section: Section; groups: Group[] }[]>(() => {
               <template v-else-if="item.kind === 'action'">
                 <span class="text">
                   <span class="label">{{ item.label }}</span>
-                  <span class="help x-muted">{{ item.help }}</span>
+                  <span class="help x-muted">{{ helpFor(item) }}</span>
                 </span>
                 <button class="x-button" @click="item.run().catch((caught) => (message = String(caught)))">{{ item.button }}</button>
               </template>
@@ -583,7 +614,7 @@ const visible = computed<{ section: Section; groups: Group[] }[]>(() => {
                   <span class="label">{{ item.label }}</span>
                   <span class="value">{{ item.format(settings[item.key] as number) }}</span>
                 </span>
-                <span class="help x-muted">{{ item.help }}</span>
+                <span class="help x-muted">{{ helpFor(item) }}</span>
                 <input
                   type="range"
                   :min="range(item.key).min"
@@ -597,7 +628,7 @@ const visible = computed<{ section: Section; groups: Group[] }[]>(() => {
               <template v-else>
                 <span class="text">
                   <span class="label">{{ item.label }}</span>
-                  <span class="help x-muted">{{ item.help }}</span>
+                  <span class="help x-muted">{{ helpFor(item) }}</span>
                 </span>
                 <div v-if="item.style === 'segmented'" class="segmented">
                   <button

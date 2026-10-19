@@ -1,5 +1,5 @@
 import { onBeforeUnmount, reactive, ref, type Ref } from 'vue'
-import { useHalone, type AppInfo, type RecordingState, type Settings, type WindowInfo, type HaloneClient } from '@halone/sdk'
+import { useHalone, type AppInfo, type RecordingState, type Settings, type SystemInfo, type WindowInfo, type HaloneClient } from '@halone/sdk'
 import { installTextMenu } from './menu'
 
 export type HostStatus = 'connecting' | 'ready' | 'no-host'
@@ -41,6 +41,13 @@ export function useSettings(halone: HaloneClient) {
   const settings = ref<Settings | null>(null)
   subscribe(halone, () => halone.settings.get(), 'settings.changed', settings)
   return settings
+}
+
+/** What Halone runs on: the platform, and on a desktop the operating system. */
+export function useSystemInfo(halone: HaloneClient) {
+  const info = ref<SystemInfo | null>(null)
+  halone.system.info().then((value) => (info.value = value), () => {})
+  return info
 }
 
 export function useFocus(halone: HaloneClient) {

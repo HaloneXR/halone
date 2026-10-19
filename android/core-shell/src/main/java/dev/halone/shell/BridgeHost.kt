@@ -284,6 +284,7 @@ class BridgeHost(
         "clipboard.writeFiles" -> shell.writeClipboardFiles(ClipboardFiles(params.requirePaths(), params.optBoolean("cut"))).let { null }
         "input.keyCapture" -> JSONObject().put("enabled", shell.keyCaptureOn())
         "input.openKeyCaptureSettings" -> shell.openKeyCaptureSettings().let { null }
+        "input.releaseToDesktop" -> shell.releaseToDesktop().let { null }
         "launcher.get" -> JSONObject().put("open", shell.launcherOpen)
         "launcher.setOpen" -> shell.setLauncherOpen(params.requireBoolean("open")).let { null }
         "apps.list" -> JSONArray(shell.apps.filter { params.optBoolean("includeHidden") || !it.hidden }.map { it.toJson() })

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { useHalone } from '@halone/sdk'
+import { useSettings, useSystemInfo } from '../shared/host'
 
 interface Shortcut {
   keys: string
@@ -10,7 +11,16 @@ interface Shortcut {
 }
 
 const halone = useHalone()
+const info = useSystemInfo(halone)
+const settings = useSettings(halone)
 const capture = ref<boolean | null>(null)
+const desktop = computed(() => info.value?.platform === 'desktop')
+/** Raw keyboard mode, where a desktop has it: every key is Halone's while its window is focused. */
+const raw = computed(() => desktop.value && info.value?.os === 'linux')
+
+function setRaw(on: boolean) {
+  halone.settings.set('input.rawKeyboard', on).catch(() => {})
+}
 const shortcuts = ref<Shortcut[]>([])
 
 fetch('/shortcuts.json')
@@ -30,7 +40,28 @@ const browser = computed(() => shortcuts.value.filter((s) => s.browser))
 
 <template>
   <div class="keyboard">
-    <div class="capture" :class="{ on: capture }">
+    <div v-if="raw" class="capture" :class="{ on: capture }">
+      <div>
+        <strong>{{ capture ? 'Halone has the keyboard' : 'The desktop keeps some keys' }}</strong>
+        <p class="x-muted">
+          {{
+            capture
+              ? 'Every key comes to Halone while its window is focused, Alt+Tab and the Meta key included. The launcher’s button gives them back to the desktop.'
+              : 'The desktop keeps Alt+Tab and the Meta key for itself; until Halone has the keyboard the Alt shortcuts below stand in. Raw keyboard gives Halone every key while its window is focused, and asks for your password once.'
+          }}
+        </p>
+      </div>
+      <label class="raw">
+        Raw keyboard
+        <input
+          type="checkbox"
+          class="switch"
+          :checked="settings?.['input.rawKeyboard'] ?? false"
+          @change="setRaw(($event.target as HTMLInputElement).checked)"
+        />
+      </label>
+    </div>
+    <div v-else-if="!desktop" class="capture" :class="{ on: capture }">
       <div>
         <strong>{{ capture ? 'Key capture is on' : 'Key capture is off' }}</strong>
         <p class="x-muted">
@@ -75,6 +106,12 @@ const browser = computed(() => shortcuts.value.filter((s) => s.browser))
 }
 .capture p {
   margin: 6px 0 0;
+}
+.raw {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  white-space: nowrap;
 }
 h3 {
   margin: 24px 0 8px;

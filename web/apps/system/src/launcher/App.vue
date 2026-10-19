@@ -7,10 +7,11 @@ import Icon from '../shared/Icon.vue'
 import NoHost from '../shared/NoHost.vue'
 import { toUrl } from '../shared/address'
 import { displayUrl } from '../shared/address'
-import { useApps, useHost, useRecording, useSettings, useWindows } from '../shared/host'
+import { useApps, useHost, useRecording, useSettings, useSystemInfo, useWindows } from '../shared/host'
 import { showMenu } from '../shared/menu'
 
 const { halone, status, error } = useHost()
+const info = useSystemInfo(halone)
 const windows = useWindows(halone)
 const settings = useSettings(halone)
 const recording = useRecording(halone)
@@ -168,6 +169,9 @@ function toggleFollow() {
         <button v-if="settings" class="x-button" :class="{ primary: settings['follow.enabled'] }" @click="toggleFollow">
           <Icon :name="settings['follow.enabled'] ? 'moving' : 'keep'" />
           {{ settings['follow.enabled'] ? 'Following' : 'World-locked' }}
+        </button>
+        <button v-if="info?.platform === 'desktop'" class="x-button" @click="run(() => halone.input.releaseToDesktop())">
+          <Icon name="swap_horiz" />Back to desktop
         </button>
       </div>
     </header>

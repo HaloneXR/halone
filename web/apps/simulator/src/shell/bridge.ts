@@ -228,6 +228,9 @@ export class Bridge {
       'input.openKeyCaptureSettings': () => {
         throw new HaloneError('unavailable', 'key capture is an Android accessibility service; the simulator has no use for it')
       },
+      'input.releaseToDesktop': () => {
+        throw new HaloneError('unavailable', 'the simulator never takes the keyboard from the desktop')
+      },
       'launcher.get': () => ({ open: shell.state.launcherOpen }),
       'launcher.setOpen': ({ open }) => shell.setLauncherOpen(open),
       'apps.list': (params) =>

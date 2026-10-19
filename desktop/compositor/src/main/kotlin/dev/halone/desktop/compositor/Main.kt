@@ -113,7 +113,7 @@ private class Options(args: Array<String>) {
 
 /**
  * Drives the pointer through spike 2's test page (`site/spike/test.html`, 1280x720) the way the mouse
- * and keyboard would: point at the button and click it, focus the field and type, scroll the list.
+ * and keyboard would: point at the button and click it, focus the field and type, a space included, scroll the list.
  */
 private fun inputScript(): List<Pair<Double, (InputRouter, DesktopPanel) -> Unit>> {
     val steps = mutableListOf<Pair<Double, (InputRouter, DesktopPanel) -> Unit>>()
@@ -124,14 +124,16 @@ private fun inputScript(): List<Pair<Double, (InputRouter, DesktopPanel) -> Unit
     steps += 1.0 to { r, p -> r.pointAt(p, 117f, 505f) }
     steps += 1.1 to { r, _ -> r.button(0, true, 0, 1.1, 0f) }
     steps += 1.15 to { r, _ -> r.button(0, false, 0, 1.15, 0f) }
-    val keys = listOf(GLFW_KEY_H, GLFW_KEY_E, GLFW_KEY_L, GLFW_KEY_L, GLFW_KEY_O).map { it to glfwGetKeyScancode(it) }
+    val text = "hello hi"
+    val keys = listOf(GLFW_KEY_H, GLFW_KEY_E, GLFW_KEY_L, GLFW_KEY_L, GLFW_KEY_O, GLFW_KEY_SPACE, GLFW_KEY_H, GLFW_KEY_I)
+        .map { it to glfwGetKeyScancode(it) }
     keys.forEachIndexed { i, (key, scancode) ->
         val at = 1.5 + i * 0.1
-        steps += at to { r, _ -> r.key(key, scancode, GLFW_PRESS, 0); r.character("hello"[i].code, 0) }
+        steps += at to { r, _ -> r.key(key, scancode, GLFW_PRESS, 0); r.character(text[i].code, 0) }
         steps += at + 0.05 to { r, _ -> r.key(key, scancode, GLFW_RELEASE, 0) }
     }
-    steps += 2.3 to { r, p -> r.pointAt(p, 324f, 601f) }
-    steps += 2.4 to { r, _ -> r.scroll(0.0, -3.0, 0) }
+    steps += 2.6 to { r, p -> r.pointAt(p, 324f, 601f) }
+    steps += 2.7 to { r, _ -> r.scroll(0.0, -3.0, 0) }
     return steps
 }
 

@@ -30,9 +30,12 @@ data class SystemInfo(
     val displayWidthPx: Int,
     val displayHeightPx: Int,
     val platform: String = "android",
+    /** The operating system, where it is not the platform itself: `macos`, `linux` or `windows`. */
+    val os: String? = null,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("platform", platform)
+        .putOpt("os", os)
         .put("version", version)
         .put("protocolVersion", Protocol.VERSION)
         .put(

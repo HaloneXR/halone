@@ -120,6 +120,13 @@ class DesktopShell(
             displayWidthPx = EYE_WIDTH_PX,
             displayHeightPx = EYE_HEIGHT_PX,
             platform = "desktop",
+            os = System.getProperty("os.name").lowercase().let { name ->
+                when {
+                    name.contains("mac") -> "macos"
+                    name.contains("win") -> "windows"
+                    else -> "linux"
+                }
+            },
         ),
         log,
         files = files,
@@ -475,6 +482,8 @@ class DesktopShell(
     var onSettingChanged: ((ShellSettings, String) -> Unit)? = null
 
     override fun keyCaptureOn(): Boolean = keyCapture()
+
+    override fun releaseToDesktop() = onReleaseToDesktop()
 
     override fun applySettings(settings: ShellSettings, changedKey: String?) {
         changedKey?.let { key -> onSettingChanged?.invoke(settings, key) }

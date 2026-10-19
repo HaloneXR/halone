@@ -43,6 +43,9 @@ interface ShellPlatform<P : WindowPanel> {
     /** Opens Android's accessibility settings on the phone, where key capture is turned on. */
     fun openKeyCaptureSettings(): Unit = throw HaloneException("unavailable", "this host has no key capture")
 
+    /** Gives the keyboard and the mouse back to the desktop Halone runs on. */
+    fun releaseToDesktop(): Unit = throw HaloneException("unavailable", "this host runs on no desktop")
+
     /** A short message on the glasses, gone by itself. */
     fun notice(text: String) {}
 
@@ -598,6 +601,8 @@ class Shell<P>(
     fun keyCaptureOn() = platform.keyCaptureOn()
 
     fun openKeyCaptureSettings() = platform.openKeyCaptureSettings()
+
+    fun releaseToDesktop() = platform.releaseToDesktop()
 
     fun clearBrowsingData(cookies: Boolean, cache: Boolean) {
         if (cookies || cache) platform.clearBrowsingData(cookies, cache)
