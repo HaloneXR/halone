@@ -797,6 +797,10 @@ int main(int argc, char *argv[]) {
     CefMainArgs mainArgs(argc, argv);
 
     @autoreleasepool {
+        // Chromium on macOS takes its scrollbars from the system's scroller style, not the OverlayScrollbar feature.
+        NSMutableDictionary *arguments = [[NSUserDefaults.standardUserDefaults volatileDomainForName:NSArgumentDomain] mutableCopy];
+        arguments[@"AppleShowScrollBars"] = @"WhenScrolling";
+        [NSUserDefaults.standardUserDefaults setVolatileDomain:arguments forName:NSArgumentDomain];
         [SpikeApplication sharedApplication];
         mach_timebase_info(&gTimebase);
 
