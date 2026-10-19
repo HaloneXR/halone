@@ -1,5 +1,7 @@
 package dev.halone.desktop.compositor.render
 
+import dev.halone.compositor.StereoLayout
+import dev.halone.compositor.StereoRegion
 import dev.halone.desktop.compositor.vk.Shaders
 import dev.halone.desktop.compositor.vk.Stage
 import dev.halone.desktop.compositor.vk.TextureSource
@@ -32,8 +34,8 @@ import org.lwjgl.vulkan.VkWriteDescriptorSet
 
 /**
  * Draws a panel's content as a rounded rectangle: the desktop counterpart of
- * TexturedQuad3D, with the same rounded-rect coverage and premultiplied output.
- * Scanout shear, cropping into parts and stereo sub-rects come later.
+ * GlQuads, with the same rounded-rect coverage, premultiplied output and stereo
+ * regions. Scanout shear comes later.
  */
 class PanelPipeline(private val vk: VulkanContext, colorFormat: Int) : AutoCloseable {
     private val setLayout: Long
@@ -135,9 +137,14 @@ class PanelPipeline(private val vk: VulkanContext, colorFormat: Int) : AutoClose
 
     fun bind(cmd: VkCommandBuffer) = vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline)
 
-    /** [mvp] maps the unit quad (-0.5..0.5, y up) onto the panel, already in Vulkan clip space. */
-    fun draw(cmd: VkCommandBuffer, texture: TextureSource, mvp: FloatArray, widthPx: Float, heightPx: Float, radiusPx: Float, alpha: Float) =
-        drawPart(cmd, texture, mvp, widthPx, heightPx, 0f, heightPx, 1f, radiusPx, alpha)
+    /**
+     * [mvp] maps the unit quad (-0.5..0.5, y up) onto the panel, already in Vulkan clip space.
+     * Inside [stereo], [eye] (0 left) sees only its own half of the region, stretched over all of it.
+     */
+    fun draw(
+        cmd: VkCommandBuffer, texture: TextureSource, mvp: FloatArray, widthPx: Float, heightPx: Float, radiusPx: Float, alpha: Float,
+        stereo: StereoRegion? = null, eye: Int = 0,
+    ) = drawPart(cmd, texture, mvp, widthPx, heightPx, 0f, heightPx, 1f, radiusPx, alpha, stereo, eye)
 
     /**
      * A full-width band of a window, [topPx] and [partHeightPx] in its pixels,
@@ -147,6 +154,7 @@ class PanelPipeline(private val vk: VulkanContext, colorFormat: Int) : AutoClose
     fun drawPart(
         cmd: VkCommandBuffer, texture: TextureSource, mvp: FloatArray, widthPx: Float, heightPx: Float,
         topPx: Float, partHeightPx: Float, cropV: Float, radiusPx: Float, alpha: Float,
+        stereo: StereoRegion? = null, eye: Int = 0,
     ) =
         stackPush().use { stack ->
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, stack.longs(descriptorFor(texture.view)), null)
@@ -155,6 +163,14 @@ class PanelPipeline(private val vk: VulkanContext, colorFormat: Int) : AutoClose
             push.putFloat(0f).putFloat(topPx).putFloat(widthPx).putFloat(partHeightPx)
             push.putFloat(widthPx).putFloat(heightPx).putFloat(radiusPx).putFloat(alpha)
             push.putFloat(1f).putFloat(cropV)
+            val stereoLayout = when (stereo?.layout) {
+                StereoLayout.SIDE_BY_SIDE -> 1f
+                StereoLayout.TOP_BOTTOM -> 2f
+                else -> 0f
+            }
+            push.putFloat(stereoLayout).putFloat(eye.toFloat())
+            if (stereo != null) push.putFloat(stereo.xPx).putFloat(stereo.yPx).putFloat(stereo.widthPx).putFloat(stereo.heightPx)
+            else push.putFloat(0f).putFloat(0f).putFloat(0f).putFloat(0f)
             push.flip()
             vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT or VK_SHADER_STAGE_FRAGMENT_BIT, 0, push)
             vkCmdDraw(cmd, 4, 1, 0, 0)
@@ -169,7 +185,7 @@ class PanelPipeline(private val vk: VulkanContext, colorFormat: Int) : AutoClose
     }
 
     private companion object {
-        const val PUSH_BYTES = 104
+        const val PUSH_BYTES = 128
         const val MAX_TEXTURES = 64
 
         val PUSH = """
@@ -180,6 +196,9 @@ class PanelPipeline(private val vk: VulkanContext, colorFormat: Int) : AutoClose
                 float radiusPx;
                 float alpha;
                 vec2 uvScale;
+                float stereo;
+                float eye;
+                vec4 stereoRect;
             } pc;
         """.trimIndent()
 
@@ -208,7 +227,16 @@ class PanelPipeline(private val vk: VulkanContext, colorFormat: Int) : AutoClose
                 vec2 window = pc.rectPx.xy + vUv * pc.rectPx.zw;
                 float d = roundedRect(window - 0.5 * pc.sizePx, 0.5 * pc.sizePx, pc.radiusPx);
                 float coverage = clamp(0.5 - d / fwidth(d), 0.0, 1.0);
-                color = texture(content, vUv * pc.uvScale) * (coverage * pc.alpha);
+                vec2 uv = vUv * pc.uvScale;
+                if (pc.stereo != 0.0) {
+                    vec2 local = (window - pc.stereoRect.xy) / pc.stereoRect.zw;
+                    if (all(greaterThanEqual(local, vec2(0.0))) && all(lessThanEqual(local, vec2(1.0)))) {
+                        if (pc.stereo == 1.0) local.x = 0.5 * (local.x + pc.eye);
+                        else local.y = 0.5 * (local.y + pc.eye);
+                        uv = (pc.stereoRect.xy + local * pc.stereoRect.zw) / pc.sizePx;
+                    }
+                }
+                color = texture(content, uv) * (coverage * pc.alpha);
             }
         """.trimIndent()
     }

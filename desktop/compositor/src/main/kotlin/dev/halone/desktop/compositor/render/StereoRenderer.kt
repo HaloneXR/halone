@@ -248,7 +248,7 @@ class StereoRenderer(
     fun record(
         target: FrameTarget,
         head: Quaternion,
-        drawScene: (VkCommandBuffer, FloatArray) -> Unit,
+        drawScene: (VkCommandBuffer, FloatArray, Int) -> Unit,
         warpPoses: (() -> Pair<Quaternion, Quaternion>)? = null,
     ) = stackPush().use { stack ->
         val cmd = target.commands
@@ -262,7 +262,7 @@ class StereoRenderer(
                 VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT)
             begin(cmd, views[index], textureWidth, textureHeight, clear, 0, 0, textureWidth, textureHeight)
             val view = Mat4.invertRigid(Mat4.multiply(headMatrix, eyePoses[index]))
-            drawScene(cmd, Mat4.multiply(projections[index], view))
+            drawScene(cmd, Mat4.multiply(projections[index], view), index)
             vkCmdEndRendering(cmd)
             FrameLoop.transition(cmd, images[index], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                 VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,

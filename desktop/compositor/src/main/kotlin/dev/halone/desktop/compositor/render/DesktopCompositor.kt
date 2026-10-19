@@ -154,19 +154,19 @@ class DesktopCompositor(private val vk: VulkanContext, colorFormat: Int, val ver
         vkCmdSetViewport(target.commands, 0, VkViewport.calloc(1, stack).width(target.width.toFloat()).height(target.height.toFloat()).maxDepth(1f))
         vkCmdSetScissor(target.commands, 0, VkRect2D.calloc(1, stack).also { it[0].extent().set(target.width, target.height) })
 
-        drawScene(target.commands, viewProjection)
+        drawScene(target.commands, viewProjection, 0)
         vkCmdEndRendering(target.commands)
     }
 
-    /** The scene through [viewProjection], into whatever rendering is open, in StereoCompositor's order. */
-    fun drawScene(cmd: VkCommandBuffer, viewProjection: FloatArray) {
+    /** The scene through [viewProjection] for [eye] (0 left), into whatever rendering is open, in StereoCompositor's order. */
+    fun drawScene(cmd: VkCommandBuffer, viewProjection: FloatArray, eye: Int) {
         val focused = scene.focused
         val grabbed = scene.grabbed
         val windows = scene.windowsOpacity
         val showChrome = windows > 0f
         for (panel in scene.drawOrder()) {
             if (showChrome) drawFrame(cmd, panel, viewProjection, panel === focused, panel === grabbed, windows)
-            if (!drawContent(cmd, panel, viewProjection, windows)) continue
+            if (!drawContent(cmd, panel, viewProjection, windows, eye)) continue
             if (showChrome) drawTitleBar(cmd, panel, viewProjection, panel === focused || panel === grabbed, windows)
             if (showChrome && windows >= 1f) drawResizeHandle(cmd, panel, viewProjection)
         }
@@ -179,7 +179,7 @@ class DesktopCompositor(private val vk: VulkanContext, colorFormat: Int, val ver
     }
 
     /** Draws a panel's page, and the page in its top band; false if it has nothing to show yet. */
-    private fun drawContent(cmd: VkCommandBuffer, panel: DesktopPanel, vp: FloatArray, alpha: Float): Boolean {
+    private fun drawContent(cmd: VkCommandBuffer, panel: DesktopPanel, vp: FloatArray, alpha: Float, eye: Int = 0): Boolean {
         if (!panel.texture.ready) return false
         if (alpha <= 0f) return true
         val width = panel.widthPx.toFloat()
@@ -188,7 +188,8 @@ class DesktopCompositor(private val vk: VulkanContext, colorFormat: Int, val ver
         val layer = panel.layer
         val band = panel.bandPx.toFloat()
         if (layer == null || band <= 0f) {
-            panels.draw(cmd, panel.texture, Mat4.multiply(vp, panelModel(panel, width, height)), width, height, panel.cornerRadiusPx, alpha)
+            panels.draw(cmd, panel.texture, Mat4.multiply(vp, panelModel(panel, width, height)), width, height, panel.cornerRadiusPx, alpha,
+                panel.stereoRegion, eye)
             return true
         }
         panels.drawPart(cmd, panel.texture, Mat4.multiply(vp, partModel(panel, band, height - band)), width, height,
