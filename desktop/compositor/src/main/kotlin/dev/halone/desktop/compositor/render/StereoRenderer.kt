@@ -62,6 +62,7 @@ class StereoRenderer(
     frameWidth: Int,
     private val frameHeight: Int,
     reprojection: Boolean = true,
+    private val inset: Int = 0,
 ) : AutoCloseable {
     private val eyeRotations = Array(2) { Quaternion.IDENTITY }
     private val tanScale = Array(2) { FloatArray(2) }
@@ -241,7 +242,7 @@ class StereoRenderer(
 
     /**
      * Draws both eyes with [drawScene] at [head], then warps them onto [target],
-     * which must be [frameHeight] high and two eyes wide. [warpPoses], when given,
+     * which must be [frameHeight] high and two eyes wide, plus [inset] on every side. [warpPoses], when given,
      * is asked for the first and last rows' poses only after the eyes are recorded.
      */
     fun record(
@@ -271,7 +272,7 @@ class StereoRenderer(
         val warp = warpPoses?.invoke()
         begin(cmd, target.view, target.width, target.height, clear, 0, 0, target.width, target.height)
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline)
-        val half = target.width / 2
+        val half = eyeWidth
         for (index in 0 until 2) {
             val push = stack.calloc(PUSH_BYTES)
             if (warp != null) {
@@ -287,8 +288,9 @@ class StereoRenderer(
             push.putFloat(if (warp != null) 1f else 0f)
             push.rewind()
             vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, push)
-            vkCmdSetViewport(cmd, 0, VkViewport.calloc(1, stack).x((index * half).toFloat()).width(half.toFloat()).height(target.height.toFloat()).maxDepth(1f))
-            vkCmdSetScissor(cmd, 0, VkRect2D.calloc(1, stack).also { it[0].offset().set(index * half, 0); it[0].extent().set(half, target.height) })
+            vkCmdSetViewport(cmd, 0, VkViewport.calloc(1, stack).x((inset + index * half).toFloat()).y(inset.toFloat())
+                .width(half.toFloat()).height(frameHeight.toFloat()).maxDepth(1f))
+            vkCmdSetScissor(cmd, 0, VkRect2D.calloc(1, stack).also { it[0].offset().set(inset + index * half, inset); it[0].extent().set(half, frameHeight) })
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, stack.longs(sets[index]), null)
             vkCmdBindVertexBuffers(cmd, 0, stack.longs(vertexBuffers[index].handle), stack.longs(0))
             vkCmdBindIndexBuffer(cmd, indexBuffers[index].handle, 0, VK_INDEX_TYPE_UINT16)

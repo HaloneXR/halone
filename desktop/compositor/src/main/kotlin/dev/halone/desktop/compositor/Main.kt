@@ -31,6 +31,7 @@ import org.lwjgl.vulkan.VK10.vkDeviceWaitIdle
 import dev.halone.desktop.compositor.lease.compositorKeymap
 import dev.halone.desktop.compositor.linux.LinuxHelper
 import dev.halone.desktop.compositor.linux.RawKeyboard
+import dev.halone.desktop.compositor.mac.MacDisplays
 import dev.halone.desktop.shell.AdBlocker
 import dev.halone.desktop.shell.AppData
 import dev.halone.desktop.shell.FileStore
@@ -188,6 +189,9 @@ private fun run(args: Array<String>) {
 
     // What needs root on Linux runs in halone-helper, started through pkexec when a setting asks for it.
     val isLinux = System.getProperty("os.name").lowercase().contains("linux")
+    val isMac = System.getProperty("os.name").lowercase().contains("mac")
+    var tucked: MacDisplays? = null
+    var overscan = 0
     fun saved(key: String) = runCatching { JSONObject(File(AppData.dir, "settings.json").readText()).optBoolean(key, false) }.getOrDefault(false)
     var rawKeyboardOn = isLinux && saved(RAW_KEYBOARD)
     var helper: LinuxHelper? = null
@@ -274,7 +278,9 @@ private fun run(args: Array<String>) {
             // scene off the glasses as soon as the wearer clicks anything on the Mac.
             glfwWindowHint(GLFW_AUTO_ICONIFY, GLFW_FALSE)
             println("monitor: ${glfwGetMonitorName(monitor)} ${video.width()}x${video.height()} @${video.refreshRate()}")
+            if (isMac) tucked = MacDisplays.tuck(monitor).also { println(if (it != null) "glasses' display tucked into a corner" else "could not tuck the glasses' display away") }
             window = glfwCreateWindow(video.width(), video.height(), "Halone", monitor, 0)
+            if (isMac) overscan = MacDisplays.overscan(window, monitor)
         }
     } else {
         window = glfwCreateWindow(1600, 900, "Halone", 0, 0)
@@ -298,7 +304,7 @@ private fun run(args: Array<String>) {
     val loop = FrameLoop(vk, condition.images)
     var verticalFov = optics.verticalFovDegrees
     val stereo = session?.let {
-        StereoRenderer(vk, loop.swapchain.format, it.calibration, optics, loop.swapchain.width, loop.swapchain.height).also { renderer ->
+        StereoRenderer(vk, loop.swapchain.format, it.calibration, optics, loop.swapchain.width - 2 * overscan, loop.swapchain.height - 2 * overscan, inset = overscan).also { renderer ->
             verticalFov = renderer.visibleVerticalDegrees
             println("stereo: ${renderer.describe()}, frame ${loop.swapchain.width}x${loop.swapchain.height}")
         }
@@ -461,11 +467,15 @@ private fun run(args: Array<String>) {
         keysGivenBack = false
         if (focused && rawKeyboardOn && rawKeys != null) helper()?.grab() else helper?.release()
     }
+    fun freeCursor() {
+        captured = false
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL)
+        if (tucked != null) MacDisplays.cursorToMain()
+    }
     fun releaseToDesktop() {
         keysGivenBack = true
         helper?.release()
-        captured = false
-        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL)
+        freeCursor()
         if (lease != null) glfwIconifyWindow(window)
     }
     glfwSetMouseButtonCallback(window) { w, button, action, modifiers ->
@@ -510,8 +520,7 @@ private fun run(args: Array<String>) {
             GLFW_KEY_ESCAPE -> if (session != null && router == null) {
                 glfwSetWindowShouldClose(window, true)
             } else {
-                captured = false
-                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL)
+                freeCursor()
                 keysGivenBack = true
                 helper?.release()
             }
@@ -646,7 +655,7 @@ private fun run(args: Array<String>) {
                 }
                 router.clamp()
                 router.followKeyTarget()
-                compositor.pointerDirection = router.direction
+                compositor.pointerDirection = if (captured) router.direction else null
             }
             val warp = if (aiming != null && photon != null && condition.reproject) { { aiming.warpPoses(photon) } } else null
             compositor.record(target, head, warp)
@@ -717,6 +726,7 @@ private fun run(args: Array<String>) {
     lease?.close()
     helper?.close()
     glfwDestroyWindow(window)
+    tucked?.close()
     session?.close()
     glfwTerminate()
 }
