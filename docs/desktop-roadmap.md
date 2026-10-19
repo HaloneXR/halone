@@ -326,7 +326,9 @@ socket or named pipe on desktop.
 
 Halone's own apps play local media through the OS instead of the web engine. A
 built-in producer decodes with the platform's media framework into a panel's
-shared textures, over the phase 6 contract.
+shared textures, over the same producer protocol as the web engine. It is a
+core part of the shell, never a plugin: the web SDK expects the player to be
+there at all times, as it is on Android.
 
 - macOS: AVFoundation. H.264, HEVC and AAC decode on Apple's hardware, and the
   codec licensing comes with the OS.
@@ -336,8 +338,7 @@ shared textures, over the phase 6 contract.
   for a file. The controls stay in the web app and act through the bridge
   (play, pause, seek, position, tracks).
 - Why: it covers phone and camera recordings, which stock CEF can't play (see
-  [Known limitations](#known-limitations)). It's also the first real producer
-  for the phase 6 contract.
+  [Known limitations](#known-limitations)).
 - Exit: an H.264 and an HEVC recording from a phone play at their own frame
   rate with hardware decoding and audio, seek, and are controlled from the
   Video app.
