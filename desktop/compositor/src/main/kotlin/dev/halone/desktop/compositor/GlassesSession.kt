@@ -86,6 +86,17 @@ class GlassesSession private constructor(
         return enterStereo()
     }
 
+    /**
+     * Back to their 2D mode if they are still in 3D (as glasses left by a run that ended
+     * abruptly are), since only their 2D EDID lists the timings an EDID patch is built from.
+     */
+    fun leaveStereo(): Boolean {
+        val display = device.display ?: return false
+        if (display.currentMode().getOrNull()?.isStereo != true) return false
+        val mono = display.preferredMonoMode() ?: return false
+        return display.setMode(mono).isSuccess
+    }
+
     /** Switches to the best stereo mode, unless the glasses are already in one. */
     fun enterStereo(): Result<DisplayMode> {
         val display = device.display ?: return Result.failure(IllegalStateException("no display control"))

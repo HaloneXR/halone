@@ -43,7 +43,8 @@ import kotlin.system.exitProcess
 private const val PANEL_VERTICAL_FILL = 0.75f
 private const val MOUSE_DEGREES_PER_PIXEL = 0.08f
 private const val PACE_TIMEOUT_NS = 100_000_000L
-private const val RECONNECT_TIMEOUT_MS = 60_000L
+private const val RECONNECT_TRY_MS = 2_000L
+private const val STILL_WAITING_NS = 30_000_000_000L
 private const val RAW_KEYBOARD = "input.rawKeyboard"
 
 /** How long the first start waits for the ad blocker to download before going on without it. */
@@ -164,7 +165,17 @@ private fun chromeScript(): List<Pair<Double, (InputRouter, DesktopPanel) -> Uni
 private fun referenceOptics(): Optics =
     GlassesRegistry.default().probe(UsbIdentity(vendorId = 0x3318, productId = 0x0432))!!.match.optics
 
+/** Any failure ends the process, so the producer and halone-helper see it go and clean up (keys back, EDID reverted). */
 fun main(args: Array<String>) {
+    try {
+        run(args)
+    } catch (e: Throwable) {
+        e.printStackTrace()
+        exitProcess(1)
+    }
+}
+
+private fun run(args: Array<String>) {
     System.setProperty("java.awt.headless", "true")
     val options = Options(args)
     check(glfwInit()) { "glfwInit failed" }
@@ -184,6 +195,7 @@ fun main(args: Array<String>) {
     }
     if (session != null && options.lease && isLinux && saved(PATCH_GLASSES_EDID)) {
         // Patched from their 2D EDID, so before they go to 3D.
+        if (session.leaveStereo()) println("glasses: back to 2D to be patched")
         helper()?.let { h ->
             h.patchEdid(true)
             val deadline = System.nanoTime() + EDID_WAIT_MS * 1_000_000
@@ -193,6 +205,7 @@ fun main(args: Array<String>) {
 
     val window: Long
     var lease: DrmLease? = null
+    var inputWindow = 0L
     var leasedOutput: Output? = null
     var refreshHz = 60
     if (session != null) {
@@ -218,19 +231,24 @@ fun main(args: Array<String>) {
             println("leased: ${leased.offer}")
             leasedOutput = DisplayOutput(leased.fd, leased.offer.connectorId, mode.frameWidth, mode.frameHeight, mode.refreshHz).apply {
                 // Unplugged, the glasses take the lease and their USB with them: they come back in 2D, on a new lease.
+                // Waits as long as it takes (their display may simply be off), until they come back or Halone is quit.
                 renewLease = {
                     println("the glasses' display went away; waiting for them")
                     lease?.close()
                     lease = null
-                    session.reconnect(RECONNECT_TIMEOUT_MS, ::glfwPollEvents, ::println)
-                        .onFailure { println("glasses: ${it.message}") }
-                    val deadline = System.nanoTime() + RECONNECT_TIMEOUT_MS * 1_000_000
+                    var reconnected = false
                     var renewed: DrmLease? = null
-                    while (renewed == null && System.nanoTime() < deadline) {
-                        renewed = DrmLease.acquire(session.device.displayNameHints).getOrNull()
+                    var noted = System.nanoTime()
+                    while (renewed == null && !(inputWindow != 0L && glfwWindowShouldClose(inputWindow))) {
+                        if (!reconnected) reconnected = session.reconnect(RECONNECT_TRY_MS, ::glfwPollEvents) {}.isSuccess
+                        if (reconnected) renewed = DrmLease.acquire(session.device.displayNameHints).getOrNull()
                         if (renewed == null) {
                             glfwPollEvents()
                             Thread.sleep(500)
+                            if (System.nanoTime() - noted > STILL_WAITING_NS) {
+                                println("still waiting for the glasses' display")
+                                noted = System.nanoTime()
+                            }
                         }
                     }
                     lease = renewed
@@ -238,6 +256,7 @@ fun main(args: Array<String>) {
                 }
             }
             window = InputWindow.create("Halone (on the glasses)")
+            inputWindow = window
         } else {
             val monitor = session.findMonitor(mode.frameWidth) ?: run {
                 session.close()
@@ -432,10 +451,13 @@ fun main(args: Array<String>) {
     // Raw keyboard: while the window has focus the helper holds every keyboard, so keys come
     // here as the hardware sends them, past the desktop's shortcuts and its held-key accents.
     val rawKeys = if (isLinux) runCatching { RawKeyboard(compositorKeymap()) }.onFailure { println("raw keyboard: ${it.message}") }.getOrNull() else null
+    var keysGivenBack = false
     fun holdKeys(focused: Boolean) {
+        keysGivenBack = false
         if (focused && rawKeyboardOn && rawKeys != null) helper()?.grab() else helper?.release()
     }
     fun releaseToDesktop() {
+        keysGivenBack = true
         helper?.release()
         captured = false
         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL)
@@ -485,6 +507,7 @@ fun main(args: Array<String>) {
             } else {
                 captured = false
                 glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL)
+                keysGivenBack = true
                 helper?.release()
             }
             GLFW_KEY_R -> {
@@ -520,7 +543,14 @@ fun main(args: Array<String>) {
                     rawKeyboardOn = isLinux && value()
                     holdKeys(glfwGetWindowAttrib(window, GLFW_FOCUSED) == GLFW_TRUE)
                 }
-                PATCH_GLASSES_EDID -> if (isLinux) (if (value()) helper() else helper)?.patchEdid(value())
+                // Applied at once only while the glasses are not in use: reverting would take a leased
+                // display away, and patching would take a desktop one. Otherwise it waits for the next launch;
+                // the patch is reverted when Halone quits either way.
+                PATCH_GLASSES_EDID -> when {
+                    !isLinux -> Unit
+                    session != null -> shell.notice("Takes effect the next time Halone starts")
+                    else -> (if (value()) helper() else helper)?.patchEdid(value())
+                }
             }
         }
     }
@@ -562,6 +592,12 @@ fun main(args: Array<String>) {
             holdKeys(glfwGetWindowAttrib(window, GLFW_FOCUSED) == GLFW_TRUE)
         }
         helper?.let { h ->
+            // The helper lets go when frames stop (a stall, or waiting for the glasses); take the keys back after.
+            if (!h.holding && rawKeyboardOn && !keysGivenBack && now - lastBeat > 1.0 &&
+                glfwGetWindowAttrib(window, GLFW_FOCUSED) == GLFW_TRUE) {
+                holdKeys(true)
+                lastBeat = now
+            }
             if (h.holding && now - lastBeat > HEARTBEAT_SECONDS) {
                 h.heartbeat()
                 lastBeat = now
