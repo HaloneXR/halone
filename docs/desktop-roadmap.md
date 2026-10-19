@@ -356,6 +356,8 @@ shared textures, over the phase 6 contract.
     not aimed was worst. 1 is the default, the same count the Mac measures.
   - `--glasses` on Wayland: GLFW names monitors after the connector ("DP-2"),
     so the glasses are found as the only monitor at the stereo width.
+  - `display.patchGlassesEdid` makes the same helper apply that override
+    itself, only while the glasses are plugged in and Halone runs.
   - `--lease`: KWin 6.7 leases the glasses once a debugfs EDID override adds
     a Microsoft HMD block, which sets the connector's non-desktop property.
     VK_EXT_acquire_drm_display then presents straight to them. RADV reports
@@ -456,10 +458,11 @@ regularly so the branch stays close.
   - Workaround: System Settings → Keyboard → when a key is held, choose to
     repeat it instead of showing accented characters. This applies to every
     app on the desktop.
-  - Running the compositor's GLFW window on XWayland also avoids it, but it
-    is not done, since a raw keyboard mode is planned: it will read keys
-    directly, as Android's accessibility service does for global shortcuts,
-    and won't go through Plasma's handling of held keys.
+  - Or turn on raw keyboard mode (`input.rawKeyboard`, Linux): while Halone's
+    window has focus, a root helper started through pkexec holds the
+    keyboards and Halone reads them directly, past Plasma's accent menu and
+    its shortcuts (Alt+Tab and Meta stay in Halone). Blur, Ctrl+Esc or the
+    launcher's button gives them back.
   - Typing text is not affected, and auto-repeated keys reach pages as
     repeats (`KeyboardEvent.repeat`).
 
