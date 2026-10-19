@@ -14,29 +14,17 @@ import dev.halone.shell.BrowserControl
 import dev.halone.shell.BrowserPrompt
 import dev.halone.shell.BrowserState
 import dev.halone.shell.BrowserTab
-import dev.halone.shell.MenuItem
+import dev.halone.shell.PageMenuHost
+import dev.halone.shell.ToolbarAutoHide
 import org.json.JSONObject
 
-/** What a web window needs from the shell for its context menu. */
-interface BrowserHost {
-    /** Shows a menu over the window, answering with the item chosen or null; returns its id, or null if it could not show. */
-    fun showMenu(items: List<MenuItem>, xPx: Float, yPx: Float, onChosen: (String?) -> Unit): Int?
-
+/** What a web window needs from the shell for its context menu and its page's prompts. */
+interface BrowserHost : PageMenuHost {
     /** Shows a dialog over the window (the protocol's `DialogSpec`); returns its id, or null if it could not show. */
     fun showDialog(dialog: JSONObject, onAnswer: (String?, JSONObject) -> Unit): Int?
 
     /** Takes down a menu or dialog the page no longer wants answered. */
     fun cancelPopup(id: Int)
-    fun openWindow(url: String, private: Boolean)
-
-    /** Opens [url] in a tab of the browser, as a link out of an installed app does. */
-    fun openInBrowser(url: String, private: Boolean)
-    fun clipboardText(): String?
-    fun setClipboardText(text: String)
-    fun download(url: String, referrer: String?, private: Boolean)
-    fun searchUrl(text: String): String
-    fun isBookmarked(url: String): Boolean
-    fun toggleBookmark()
 }
 
 /**
@@ -83,24 +71,17 @@ class BrowserEngine(
     @Volatile
     var chromeFieldFocused = false
 
-    private var hiddenByScroll = false
-    private var wantHidden = false
-    private var lastScrollY = 0
-
-    /** A finger is on the page, or the page moved, this recently: no time to change its viewport. */
-    private var touching = false
-    private var lastActivityAt = 0L
-
-    /**
-     * When the wearer last scrolled, and until when the page's own movement is
-     * not theirs. Resizing the viewport and keeping the page still both scroll
-     * it; read as the wearer scrolling, that brought the toolbar back, whose
-     * own scroll hid it again, and so on for ever.
-     */
-    private var lastInputAt = 0L
-    private var ignoreScrollUntil = 0L
     private val handler = Handler(Looper.getMainLooper())
-    private val settleCheck = Runnable { applyWhenSettled() }
+    private val settleCheck: Runnable = Runnable { autoHide.settle() }
+    private val autoHide: ToolbarAutoHide = ToolbarAutoHide(
+        enabled = autoHideToolbar,
+        clock = SystemClock::uptimeMillis,
+        schedule = { delayMs ->
+            handler.removeCallbacks(settleCheck)
+            handler.postDelayed(settleCheck, delayMs)
+        },
+        apply = { updateBand(keepPageStill = true) },
+    )
 
     /** Where the wearer last pressed the page, in window pixels; a dropdown opens there. */
     private var lastPressX = content.widthPx / 2f
@@ -124,7 +105,7 @@ class BrowserEngine(
             updateBand(keepPageStill = false)
             onChange?.invoke()
         }
-        content.onScroll = ::onScroll
+        content.onScroll = autoHide::onScroll
         content.onFullScreen = { full ->
             fullScreen = full
             updateBand(keepPageStill = false)
@@ -139,51 +120,13 @@ class BrowserEngine(
     /** For the shell to give the window the screen's size while the page is full screen. */
     var onFullScreenChange: ((Boolean) -> Unit)? = null
 
-    private fun onScroll(scrollY: Int) {
-        val delta = scrollY - lastScrollY
-        lastScrollY = scrollY
-        val now = SystemClock.uptimeMillis()
-        if (now < ignoreScrollUntil || now - lastInputAt > USER_SCROLL_MS) return
-        wantHidden = when {
-            !autoHideToolbar() || scrollY <= NEAR_TOP_PX -> false
-            delta > SCROLL_SLOP_PX -> true
-            delta < -SCROLL_SLOP_PX -> false
-            else -> wantHidden
-        }
-        activity()
-    }
-
-    private fun input() {
-        lastInputAt = SystemClock.uptimeMillis()
-        activity()
-    }
-
-    private fun activity() {
-        lastActivityAt = SystemClock.uptimeMillis()
-        handler.removeCallbacks(settleCheck)
-        handler.postDelayed(settleCheck, SETTLE_MS)
-    }
-
-    /**
-     * Hides or shows the toolbar once scrolling has come to rest. Changing the
-     * viewport while a finger is down moves the page's coordinates under it.
-     */
-    private fun applyWhenSettled() {
-        if (touching || SystemClock.uptimeMillis() - lastActivityAt < SETTLE_MS) return
-        if (wantHidden == hiddenByScroll) return
-        hiddenByScroll = wantHidden
-        updateBand(keepPageStill = true)
-    }
+    private fun input() = autoHide.input()
 
     fun setDesktopUserAgent(desktop: Boolean) = content.setDesktopUserAgent(desktop)
 
     /** Re-reads the auto-hide setting, so turning it off brings the toolbar straight back. */
     fun settingsChanged() {
-        if (!autoHideToolbar() && hiddenByScroll) {
-            hiddenByScroll = false
-            wantHidden = false
-            updateBand(keepPageStill = lastScrollY > NEAR_TOP_PX)
-        }
+        if (autoHide.settingsChanged()) updateBand(keepPageStill = !autoHide.nearTop)
     }
 
     /**
@@ -193,13 +136,13 @@ class BrowserEngine(
      * the tab row comes or goes, it simply reflows.
      */
     private fun updateBand(keepPageStill: Boolean) {
-        val next = BrowserBand.heightPx(content.tabs.size, content.active.prompts.isNotEmpty(), fullScreen, hiddenByScroll)
+        val next = BrowserBand.heightPx(content.tabs.size, content.active.prompts.isNotEmpty(), fullScreen, autoHide.hidden)
         val previous = visibleHeightPx
         if (next == previous) return
         visibleHeightPx = next
-        ignoreScrollUntil = SystemClock.uptimeMillis() + OWN_SCROLL_MS
+        autoHide.bandChanged()
         content.resizeViewport(content.widthPx, heightPx - next)
-        if (keepPageStill && (next < previous || lastScrollY > NEAR_TOP_PX)) content.scrollBy(next - previous)
+        if (keepPageStill && (next < previous || !autoHide.nearTop)) content.scrollBy(next - previous)
     }
 
     override fun state(): BrowserState {
@@ -272,7 +215,7 @@ class BrowserEngine(
         if (target === content && phase == TouchPhase.DOWN) pressed(x, y)
         target.dispatchTouch(phase, x, if (target === content) y - visibleHeightPx else y)
         if (target === content) {
-            touching = phase == TouchPhase.DOWN || phase == TouchPhase.MOVE
+            autoHide.touching = phase == TouchPhase.DOWN || phase == TouchPhase.MOVE
             input()
         }
         if (phase == TouchPhase.UP || phase == TouchPhase.CANCEL) touchTarget = null
@@ -318,20 +261,5 @@ class BrowserEngine(
 
     companion object {
         private const val TOOLBAR_PX = BrowserBand.TOOLBAR_PX
-        private const val TABS_PX = BrowserBand.TABS_PX
-
-        private const val SCROLL_SLOP_PX = 8
-
-        /** Near the top the toolbar always shows, and there is room to scroll by its height. */
-        private const val NEAR_TOP_PX = TOOLBAR_PX + TABS_PX + 16
-
-        /** How long scrolling has to be still before the toolbar hides or comes back. */
-        private const val SETTLE_MS = 150L
-
-        /** How long after the wearer's last input the page moving is still theirs: a fling. */
-        private const val USER_SCROLL_MS = 1_500L
-
-        /** How long the page's own movement after a viewport change is ignored. */
-        private const val OWN_SCROLL_MS = 600L
     }
 }

@@ -58,6 +58,7 @@ import dev.halone.shell.SystemInfo
 import dev.halone.shell.WebApp
 import dev.halone.shell.WebAppControl
 import dev.halone.shell.WebApps
+import dev.halone.shell.SearchEngines
 import dev.halone.shell.applyTo
 import dev.halone.shell.WebManifest
 import dev.halone.shell.WindowKind
@@ -643,14 +644,7 @@ class ShellSession(
         override fun download(url: String, referrer: String?, private: Boolean) =
             downloader.fetch(GeckoPanel.sharedRuntime(context), url, referrer, private)
 
-        override fun searchUrl(text: String): String {
-            val query = java.net.URLEncoder.encode(text, "UTF-8")
-            return when (shell.settings.string(ShellSettings.BROWSER_SEARCH_ENGINE)) {
-                "google" -> "https://www.google.com/search?q=$query"
-                "bing" -> "https://www.bing.com/search?q=$query"
-                else -> "https://duckduckgo.com/?q=$query"
-            }
-        }
+        override fun searchUrl(text: String) = SearchEngines.url(shell.settings.string(ShellSettings.BROWSER_SEARCH_ENGINE), text)
 
         override fun isBookmarked(url: String) = browsing.bookmarks.find(url) != null
 

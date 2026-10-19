@@ -9,6 +9,7 @@ import android.os.SystemClock
 import android.provider.MediaStore
 import android.webkit.MimeTypeMap
 import android.webkit.URLUtil
+import dev.halone.shell.DownloadNames
 import dev.halone.shell.Downloads
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -141,12 +142,11 @@ class Downloader(
     private fun guessType(name: String): String? =
         MimeTypeMap.getSingleton().getMimeTypeFromExtension(name.substringAfterLast('.', "").lowercase())
 
-    private fun sanitise(name: String) = name.replace(Regex("[\\\\/:*?\"<>|\\u0000-\\u001f]"), "_").take(MAX_NAME).ifBlank { "download" }
+    private fun sanitise(name: String) = DownloadNames.sanitise(name)
 
     private companion object {
         const val MAX_PARALLEL = 3
         const val BUFFER_BYTES = 64 * 1024
         const val PROGRESS_MS = 250L
-        const val MAX_NAME = 200
     }
 }
