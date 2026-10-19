@@ -35,6 +35,9 @@ interface Output {
 
     /** The refresh the output was set to, when it is known up front. */
     val refreshHz: Int? get() = null
+
+    /** Reaches the output again by other means once [surface] can no longer, as a fresh lease does; false if it cannot. */
+    fun renew(): Boolean = false
 }
 
 class WindowOutput(val window: Long) : Output {
@@ -72,8 +75,8 @@ class WindowOutput(val window: Long) : Output {
  * at [wantedHz].
  */
 class DisplayOutput(
-    private val drmFd: Int,
-    private val connectorId: Int,
+    private var drmFd: Int,
+    private var connectorId: Int,
     private val width: Int,
     private val height: Int,
     private val wantedHz: Float,
@@ -96,7 +99,7 @@ class DisplayOutput(
         val pDisplay = stack.mallocLong(1)
         if (vkGetDrmDisplayEXT(device, drmFd, connectorId, pDisplay) != VK_SUCCESS || pDisplay.get(0) == VK_NULL_HANDLE) return VK_NULL_HANDLE
         val found = pDisplay.get(0)
-        vkCheck(vkAcquireDrmDisplayEXT(device, drmFd, found), "vkAcquireDrmDisplayEXT")
+        if (vkAcquireDrmDisplayEXT(device, drmFd, found) != VK_SUCCESS) return VK_NULL_HANDLE
         physicalDevice = device
         display = found
 
@@ -149,6 +152,16 @@ class DisplayOutput(
     }
 
     override fun size() = extent
+
+    /** A fresh lease's fd and connector, for when the old one was revoked; null if none could be had. */
+    var renewLease: (() -> Pair<Int, Int>?)? = null
+
+    override fun renew(): Boolean {
+        val (fd, connector) = renewLease?.invoke() ?: return false
+        drmFd = fd
+        connectorId = connector
+        return true
+    }
 
     override fun release() {
         physicalDevice?.let { if (display != VK_NULL_HANDLE) vkReleaseDisplayEXT(it, display) }

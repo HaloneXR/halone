@@ -70,6 +70,9 @@ class DisplayClock(
     /** True once both halves are in and the grid can be projected forward. */
     val ready: Boolean get() = hasTiming && hasClock
 
+    /** Forgets everything, for glasses that were reconnected and count their beacons and clock afresh. */
+    fun reset() = state.set(State())
+
     val periodNs: Double get() = state.get().periodNs
     val reportedPeriodNs: Long get() = state.get().reportedPeriodNs
     val refreshesPerBeacon: Int get() = state.get().refreshesPerBeacon

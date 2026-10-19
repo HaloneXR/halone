@@ -199,6 +199,7 @@ class VulkanContext(val output: Output) : AutoCloseable {
         vkDestroySurfaceKHR(instance, surface, null)
         output.release()
         surface = output.surface(instance, physicalDevice)
+        if (surface == VK_NULL_HANDLE && output.renew()) surface = output.surface(instance, physicalDevice)
         check(surface != VK_NULL_HANDLE) { "the output could not be reached again" }
     }
 

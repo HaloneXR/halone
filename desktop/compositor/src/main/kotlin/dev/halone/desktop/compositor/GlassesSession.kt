@@ -12,11 +12,14 @@ import org.lwjgl.glfw.GLFW.*
 
 /** Connected glasses, their tracker, and the display they show up as. */
 class GlassesSession private constructor(
-    private val glasses: DesktopGlasses,
-    val device: GlassesDevice,
+    private var glasses: DesktopGlasses,
+    device: GlassesDevice,
     val calibration: DeviceCalibration?,
     val tracker: HeadTracker,
 ) : AutoCloseable {
+    var device: GlassesDevice = device
+        private set
+
     var stereoMode: DisplayMode? = null
         private set
 
@@ -25,8 +28,11 @@ class GlassesSession private constructor(
 
     @Volatile
     private var syncing = true
-    private val clockSync: Thread? = displayClock?.let { clock ->
-        val scanout = device.scanout!!
+    private var clockSync: Thread? = startClock()
+
+    private fun startClock(): Thread? = displayClock?.let { clock ->
+        val scanout = device.scanout ?: return null
+        syncing = true
         scanout.start { clock.onBeacon(it) }
         Thread({
             while (syncing) {
@@ -41,6 +47,43 @@ class GlassesSession private constructor(
                 }
             }
         }, "display-clock").apply { isDaemon = true; start() }
+    }
+
+    private fun stopDevice() {
+        syncing = false
+        clockSync?.join(1000)
+        runCatching { device.scanout?.stop() }
+        runCatching { device.tracking.stop() }
+    }
+
+    /**
+     * Opens the glasses again after they went away, as they do when unplugged:
+     * the same tracker and display clock carry on, with the clock counting
+     * afresh, and the glasses go back to stereo. Waits up to [timeoutMs],
+     * calling [idle] in between tries.
+     */
+    fun reconnect(timeoutMs: Long, idle: () -> Unit, log: (String) -> Unit): Result<DisplayMode> {
+        stopDevice()
+        runCatching { glasses.shutdown() }
+        val deadline = System.nanoTime() + timeoutMs * 1_000_000
+        while (true) {
+            val next = DesktopGlasses()
+            val connected = next.connect()
+            if (connected.isSuccess) {
+                glasses = next
+                device = connected.getOrThrow()
+                break
+            }
+            next.shutdown()
+            if (System.nanoTime() > deadline) return Result.failure(IllegalStateException("the glasses did not come back"))
+            idle()
+            Thread.sleep(RECONNECT_POLL_MS)
+        }
+        log("glasses: reconnected ${device.info.displayName}")
+        device.tracking.start(tracker)
+        displayClock?.reset()
+        clockSync = startClock()
+        return enterStereo()
     }
 
     /** Switches to the best stereo mode, unless the glasses are already in one. */
@@ -79,10 +122,7 @@ class GlassesSession private constructor(
     }
 
     override fun close() {
-        syncing = false
-        clockSync?.join(1000)
-        runCatching { device.scanout?.stop() }
-        runCatching { device.tracking.stop() }
+        stopDevice()
         device.display?.let { display -> display.preferredMonoMode()?.let { runCatching { display.setMode(it) } } }
         glasses.shutdown()
     }
@@ -91,6 +131,7 @@ class GlassesSession private constructor(
         private const val CLOCK_BURST = 5
         private const val CLOCK_BURST_GAP_MS = 25L
         private const val CLOCK_RESYNC_MS = 5_000L
+        private const val RECONNECT_POLL_MS = 500L
 
         fun open(log: (String) -> Unit): GlassesSession {
             val glasses = DesktopGlasses()

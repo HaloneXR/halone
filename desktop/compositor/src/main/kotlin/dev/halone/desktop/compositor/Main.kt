@@ -35,6 +35,7 @@ import kotlin.system.exitProcess
 private const val PANEL_VERTICAL_FILL = 0.75f
 private const val MOUSE_DEGREES_PER_PIXEL = 0.08f
 private const val PACE_TIMEOUT_NS = 100_000_000L
+private const val RECONNECT_TIMEOUT_MS = 60_000L
 
 /** How frames are paced, aimed and warped. */
 private data class Condition(
@@ -166,7 +167,27 @@ fun main(args: Array<String>) {
             }
             lease = leased
             println("leased: ${leased.offer}")
-            leasedOutput = DisplayOutput(leased.fd, leased.offer.connectorId, mode.frameWidth, mode.frameHeight, mode.refreshHz)
+            leasedOutput = DisplayOutput(leased.fd, leased.offer.connectorId, mode.frameWidth, mode.frameHeight, mode.refreshHz).apply {
+                // Unplugged, the glasses take the lease and their USB with them: they come back in 2D, on a new lease.
+                renewLease = {
+                    println("the glasses' display went away; waiting for them")
+                    lease?.close()
+                    lease = null
+                    session.reconnect(RECONNECT_TIMEOUT_MS, ::glfwPollEvents, ::println)
+                        .onFailure { println("glasses: ${it.message}") }
+                    val deadline = System.nanoTime() + RECONNECT_TIMEOUT_MS * 1_000_000
+                    var renewed: DrmLease? = null
+                    while (renewed == null && System.nanoTime() < deadline) {
+                        renewed = DrmLease.acquire(session.device.displayNameHints).getOrNull()
+                        if (renewed == null) {
+                            glfwPollEvents()
+                            Thread.sleep(500)
+                        }
+                    }
+                    lease = renewed
+                    renewed?.let { println("leased again: ${it.offer}"); it.fd to it.offer.connectorId }
+                }
+            }
             window = InputWindow.create("Halone (on the glasses)")
         } else {
             val monitor = session.findMonitor(mode.frameWidth) ?: run {
