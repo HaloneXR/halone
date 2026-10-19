@@ -370,6 +370,11 @@ shared textures, over the phase 6 contract.
     timing for the leased display, so it swaps an empty OpenGL ES buffer.
   - KWin keeps the connector on offer through the glasses' switch to 3D, so
     the lease is taken after the switch.
+  - Unplugged, the glasses take their lease and their USB with them and come
+    back in 2D. The compositor reopens them into the same tracker and display
+    clock, switches them back to 3D and takes a fresh lease. Worn and replugged
+    by hand, the picture came back in 3D with tracking; the switch to 3D drops
+    the new lease once more, which a second round recovers within ~1.5 s.
   - The shell's battery, network meter and thumbnails: sysfs for the battery
     (plugged in counts as charging, as a laptop held at its charge limit
     reports "Not charging"); NetworkManager over sd-bus for the primary
