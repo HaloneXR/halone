@@ -28,6 +28,11 @@ import org.lwjgl.glfw.GLFW.*
 import org.lwjgl.glfw.GLFWVulkan.glfwVulkanSupported
 import org.lwjgl.system.MemoryStack.stackPush
 import org.lwjgl.vulkan.VK10.vkDeviceWaitIdle
+import dev.halone.desktop.compositor.lease.compositorKeymap
+import dev.halone.desktop.compositor.linux.LinuxHelper
+import dev.halone.desktop.compositor.linux.RawKeyboard
+import dev.halone.desktop.shell.AppData
+import org.json.JSONObject
 import java.io.File
 import kotlin.math.sin
 import kotlin.system.exitProcess
@@ -36,6 +41,10 @@ private const val PANEL_VERTICAL_FILL = 0.75f
 private const val MOUSE_DEGREES_PER_PIXEL = 0.08f
 private const val PACE_TIMEOUT_NS = 100_000_000L
 private const val RECONNECT_TIMEOUT_MS = 60_000L
+private const val RAW_KEYBOARD = "input.rawKeyboard"
+private const val PATCH_GLASSES_EDID = "display.patchGlassesEdid"
+private const val HEARTBEAT_SECONDS = 0.25
+private const val EDID_WAIT_MS = 15_000L
 
 /** How frames are paced, aimed and warped. */
 private data class Condition(
@@ -148,6 +157,25 @@ fun main(args: Array<String>) {
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API)
 
     val session = if (options.glasses) GlassesSession.open(::println) else null
+
+    // What needs root on Linux runs in halone-helper, started through pkexec when a setting asks for it.
+    val isLinux = System.getProperty("os.name").lowercase().contains("linux")
+    fun saved(key: String) = runCatching { JSONObject(File(AppData.dir, "settings.json").readText()).optBoolean(key, false) }.getOrDefault(false)
+    var rawKeyboardOn = isLinux && saved(RAW_KEYBOARD)
+    var helper: LinuxHelper? = null
+    fun helper(): LinuxHelper? {
+        if (helper?.alive != true) helper = if (isLinux) LinuxHelper.start() else null
+        return helper
+    }
+    if (session != null && options.lease && isLinux && saved(PATCH_GLASSES_EDID)) {
+        // Patched from their 2D EDID, so before they go to 3D.
+        helper()?.let { h ->
+            h.patchEdid(true)
+            val deadline = System.nanoTime() + EDID_WAIT_MS * 1_000_000
+            while (h.patched.isEmpty() && h.alive && System.nanoTime() < deadline) Thread.sleep(100)
+        }
+    }
+
     val window: Long
     var lease: DrmLease? = null
     var leasedOutput: Output? = null
@@ -160,7 +188,13 @@ fun main(args: Array<String>) {
         }
         println("stereo mode: $mode")
         if (options.lease) {
-            val leased = DrmLease.acquire(session.device.displayNameHints, ::println).getOrElse {
+            var attempt = DrmLease.acquire(session.device.displayNameHints, ::println)
+            val deadline = System.nanoTime() + EDID_WAIT_MS * 1_000_000
+            while (attempt.isFailure && helper?.patched?.isNotEmpty() == true && System.nanoTime() < deadline) {
+                Thread.sleep(500)
+                attempt = DrmLease.acquire(session.device.displayNameHints)
+            }
+            val leased = attempt.getOrElse {
                 session.close()
                 println("could not lease the glasses' display: ${it.message}")
                 exitProcess(1)
@@ -377,12 +411,25 @@ fun main(args: Array<String>) {
         if (glfwRawMouseMotionSupported()) glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE)
         println("pointer: mouse moves it, Ctrl+R recentres, Ctrl+Q quits, Ctrl+Esc releases the mouse; window focused ${glfwGetWindowAttrib(window, GLFW_FOCUSED) == GLFW_TRUE}")
     }
+    // Raw keyboard: while the window has focus the helper holds every keyboard, so keys come
+    // here as the hardware sends them, past the desktop's shortcuts and its held-key accents.
+    val rawKeys = if (isLinux) runCatching { RawKeyboard(compositorKeymap()) }.onFailure { println("raw keyboard: ${it.message}") }.getOrNull() else null
+    fun holdKeys(focused: Boolean) {
+        if (focused && rawKeyboardOn && rawKeys != null) helper()?.grab() else helper?.release()
+    }
+    fun releaseToDesktop() {
+        helper?.release()
+        captured = false
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL)
+        if (lease != null) glfwIconifyWindow(window)
+    }
     glfwSetMouseButtonCallback(window) { w, button, action, modifiers ->
         mods = modifiers
         if (!captured && action == GLFW_PRESS) {
             captured = true
             lastX = Double.NaN
             glfwSetInputMode(w, GLFW_CURSOR, GLFW_CURSOR_DISABLED)
+            holdKeys(true)
             return@glfwSetMouseButtonCallback
         }
         router?.button(button, action == GLFW_PRESS, modifiers, glfwGetTime(), compositor.headYawRadians)
@@ -400,23 +447,27 @@ fun main(args: Array<String>) {
         lastY = y
     }
     glfwSetScrollCallback(window) { _, dx, dy -> router?.scroll(dx, dy, mods) }
-    glfwSetWindowFocusCallback(window) { _, focused -> println("focus ${if (focused) "gained" else "lost"}") }
-    glfwSetCharCallback(window) { _, codepoint -> router?.character(codepoint, mods) }
-    glfwSetKeyCallback(window) { w, key, scancode, action, modifiers ->
+    glfwSetWindowFocusCallback(window) { _, focused ->
+        println("focus ${if (focused) "gained" else "lost"}")
+        holdKeys(focused)
+    }
+    fun onChar(codepoint: Int) = router?.character(codepoint, mods)
+    fun onKey(key: Int, scancode: Int, action: Int, modifiers: Int) {
         mods = modifiers
-        if (desktopShell?.key(key, action, modifiers) == true) return@glfwSetKeyCallback
+        if (desktopShell?.key(key, action, modifiers) == true) return
         if (router != null && modifiers and GLFW_MOD_CONTROL == 0) {
             router.key(key, scancode, action, modifiers)
-            return@glfwSetKeyCallback
+            return
         }
-        if (action != GLFW_PRESS) return@glfwSetKeyCallback
+        if (action != GLFW_PRESS) return
         when (key) {
-            GLFW_KEY_Q -> if (router != null) glfwSetWindowShouldClose(w, true)
+            GLFW_KEY_Q -> if (router != null) glfwSetWindowShouldClose(window, true)
             GLFW_KEY_ESCAPE -> if (session != null && router == null) {
-                glfwSetWindowShouldClose(w, true)
+                glfwSetWindowShouldClose(window, true)
             } else {
                 captured = false
-                glfwSetInputMode(w, GLFW_CURSOR, GLFW_CURSOR_NORMAL)
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL)
+                helper?.release()
             }
             GLFW_KEY_R -> {
                 yaw = 0f
@@ -436,6 +487,28 @@ fun main(args: Array<String>) {
             }
         }
     }
+    glfwSetCharCallback(window) { _, codepoint -> if (helper?.holding != true) onChar(codepoint) }
+    glfwSetKeyCallback(window) { _, key, scancode, action, modifiers -> if (helper?.holding != true) onKey(key, scancode, action, modifiers) }
+    if (rawKeyboardOn) helper()
+    // Taken in the first frame, once the loop is there to send the helper its heartbeat.
+    var keysTaken = false
+    desktopShell?.let { shell ->
+        shell.keyCapture = { helper?.holding == true }
+        shell.onReleaseToDesktop = ::releaseToDesktop
+        shell.onSettingChanged = { settings, key ->
+            fun value() = runCatching { settings.boolean(key) }.getOrDefault(false)
+            when (key) {
+                RAW_KEYBOARD -> {
+                    rawKeyboardOn = isLinux && value()
+                    holdKeys(glfwGetWindowAttrib(window, GLFW_FOCUSED) == GLFW_TRUE)
+                }
+                PATCH_GLASSES_EDID -> if (isLinux) (if (value()) helper() else helper)?.patchEdid(value())
+            }
+        }
+    }
+    var lastBeat = 0.0
+    val rawLatencyMs = ArrayList<Double>()
+    val rawReceiveMs = ArrayList<Double>()
 
     fun byProducer(index: Int): DesktopPanel? = with(compositor.scene) {
         panels.firstOrNull { it.producerIndex == index } ?: listOfNotNull(dock, launcher, popup).firstOrNull { it.producerIndex == index }
@@ -466,6 +539,22 @@ fun main(args: Array<String>) {
         glfwPollEvents()
         desktopShell?.tick(System.nanoTime())
         val now = glfwGetTime()
+        if (!keysTaken) {
+            keysTaken = true
+            holdKeys(glfwGetWindowAttrib(window, GLFW_FOCUSED) == GLFW_TRUE)
+        }
+        helper?.let { h ->
+            if (h.holding && now - lastBeat > HEARTBEAT_SECONDS) {
+                h.heartbeat()
+                lastBeat = now
+            }
+            while (true) {
+                val key = h.keys.poll() ?: break
+                rawLatencyMs += (System.nanoTime() - key.atNs) / 1e6
+                rawReceiveMs += (key.receivedNs - key.atNs) / 1e6
+                rawKeys?.handle(key.code, key.value, ::onKey) { codepoint, m -> mods = m; onChar(codepoint) }
+            }
+        }
         if (options.sweep) yaw = 50f * sin((now - start) * 0.6).toFloat()
         val drawn = loop.frame { target ->
             // Sampled here, after the acquire and fence waits, so none of that
@@ -521,6 +610,14 @@ fun main(args: Array<String>) {
                 frames / (now - reportAt + 2), worstMs, headYaw, headPitch, aim?.refreshesAhead ?: "-",
                 compositor.scene.panels.joinToString { "%.1f°".format(Math.toDegrees(it.pose.yawRadians.toDouble())) }))
             if (!blind) println(probe.report(refreshNs)) else probe.report(refreshNs)
+            if (rawLatencyMs.isNotEmpty()) {
+                rawLatencyMs.sort()
+                rawReceiveMs.sort()
+                println("raw keys: %d, kernel to dispatch p50 %.1f max %.1f ms, kernel to received p50 %.1f max %.1f ms".format(rawLatencyMs.size,
+                    rawLatencyMs[rawLatencyMs.size / 2], rawLatencyMs.last(), rawReceiveMs[rawReceiveMs.size / 2], rawReceiveMs.last()))
+                rawLatencyMs.clear()
+                rawReceiveMs.clear()
+            }
             if (loop.surfacesLost > 0) {
                 println("surface lost and made again ${loop.surfacesLost} times")
                 loop.surfacesLost = 0
@@ -559,6 +656,7 @@ fun main(args: Array<String>) {
     loop.close()
     vk.close()
     lease?.close()
+    helper?.close()
     glfwDestroyWindow(window)
     session?.close()
     glfwTerminate()

@@ -62,7 +62,10 @@ class DrmLease private constructor(private val wire: Wire, val offer: LeaseOffer
     }
 }
 
-/** Just enough of the Wayland wire protocol for wp_drm_lease_v1. */
+/** The compositor's keymap (xkb text) as it gives any client asking for a keyboard; null where there is no Wayland. */
+fun compositorKeymap(): String? = runCatching { Wire.connect().use { it.keymap() } }.getOrNull()
+
+/** Just enough of the Wayland wire protocol for wp_drm_lease_v1 and a keymap. */
 private class Wire(private val socket: Int) : AutoCloseable {
     private var nextId = 2
     private val pending = ByteBuffer.allocate(1 shl 16).order(ByteOrder.nativeOrder()).limit(0)
@@ -85,6 +88,38 @@ private class Wire(private val socket: Int) : AutoCloseable {
         send(DISPLAY, 1) { putInt(registry) }
         roundTrip()
         return device
+    }
+
+    fun keymap(): String? {
+        val registry = newId()
+        var seat: Int? = null
+        handlers[registry] = { opcode, args ->
+            if (opcode == 0 && seat == null) {
+                val name = args.int
+                if (string(args) == "wl_seat") {
+                    seat = newId()
+                    send(registry, 0) { putInt(name); putString("wl_seat"); putInt(1); putInt(seat!!) }
+                }
+            }
+        }
+        send(DISPLAY, 1) { putInt(registry) }
+        roundTrip()
+        val seatId = seat ?: return null
+        val keyboard = newId()
+        var keymap: String? = null
+        handlers[keyboard] = { opcode, args ->
+            if (opcode == 0) {
+                val format = args.int
+                val size = args.int
+                fds.removeFirstOrNull()?.let { fd ->
+                    if (format == XKB_V1) keymap = runCatching { File("/proc/self/fd/$fd").readBytes().copyOf(size).decodeToString().trimEnd('\u0000') }.getOrNull()
+                    LibC.native.close(fd)
+                }
+            }
+        }
+        send(seatId, 1) { putInt(keyboard) }
+        roundTrip()
+        return keymap
     }
 
     fun offersFrom(device: Int): Map<Int, LeaseOffer> {
@@ -219,6 +254,7 @@ private class Wire(private val socket: Int) : AutoCloseable {
     companion object {
         private const val DISPLAY = 1
         private const val LEASE_DEVICE = "wp_drm_lease_device_v1"
+        private const val XKB_V1 = 1
         private const val AF_UNIX = 1
         private const val SOCK_STREAM_CLOEXEC = 1 or 0x80000
         private const val SOL_SOCKET = 1

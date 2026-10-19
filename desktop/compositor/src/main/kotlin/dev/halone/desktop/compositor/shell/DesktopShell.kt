@@ -461,7 +461,19 @@ class DesktopShell(
 
     override fun headPitchRadians() = scene.gazePitchRadians ?: 0f
 
+    /** Whether raw keyboard mode holds the keys now, for the Settings app's key capture state. */
+    var keyCapture: () -> Boolean = { false }
+
+    /** Gives the keyboard and mouse back to the computer's desktop, as the launcher's button asks. */
+    var onReleaseToDesktop: () -> Unit = {}
+
+    /** Every settings change, after the shell's own, for the compositor's settings (raw keyboard, EDID patch). */
+    var onSettingChanged: ((ShellSettings, String) -> Unit)? = null
+
+    override fun keyCaptureOn(): Boolean = keyCapture()
+
     override fun applySettings(settings: ShellSettings, changedKey: String?) {
+        changedKey?.let { key -> onSettingChanged?.invoke(settings, key) }
         settings.applyTo(scene)
         if (changedKey == ShellSettings.BROWSER_AUTO_HIDE_TOOLBAR) browsers.values.forEach { it.settingsChanged() }
         if (changedKey == ShellSettings.PANEL_DISTANCE_METRES) {
