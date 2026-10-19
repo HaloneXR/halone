@@ -142,12 +142,6 @@ private fun referenceOptics(): Optics =
 fun main(args: Array<String>) {
     System.setProperty("java.awt.headless", "true")
     val options = Options(args)
-    // With the glasses leased, GLFW's only window takes the keyboard and mouse. Plasma
-    // shows accented characters for a held letter that has them (A, D, E, K...) and,
-    // to a Wayland client without text-input, sends its release at once; XWayland
-    // gets the hold and its repeats as typed.
-    if (options.lease && System.getenv("WAYLAND_DISPLAY") != null && System.getenv("DISPLAY") != null &&
-        glfwPlatformSupported(GLFW_PLATFORM_X11)) glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11)
     check(glfwInit()) { "glfwInit failed" }
     check(glfwVulkanSupported()) { "GLFW reports no Vulkan loader" }
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API)
