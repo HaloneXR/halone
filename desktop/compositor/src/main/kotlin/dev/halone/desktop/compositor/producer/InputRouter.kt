@@ -186,7 +186,9 @@ class InputRouter(
         when (action) {
             GLFW_PRESS, GLFW_REPEAT -> {
                 val special = SPECIAL_CHARACTERS[key]
-                if (special != null || glfwGetKeyName(key, scancode) == null || modifiers and (GLFW_MOD_CONTROL or GLFW_MOD_SUPER) != 0) {
+                // Space waits for its character too: after a dead key it types the accent, not a space.
+                val typesText = key == GLFW_KEY_SPACE || (special == null && glfwGetKeyName(key, scancode) != null)
+                if (!typesText || modifiers and (GLFW_MOD_CONTROL or GLFW_MOD_SUPER) != 0) {
                     val character = special ?: glfwGetKeyName(key, scancode)?.firstOrNull()?.code ?: 0
                     typed[scancode] = character
                     host?.input(target, ProducerHost.INPUT_KEY_DOWN, 0f, 0f, modifiers = macFlags(modifiers, action == GLFW_REPEAT),
@@ -204,11 +206,12 @@ class InputRouter(
         }
     }
 
+    /** A typed character; one no key waits for (the second of a cancelled dead key's two) goes on its own. */
     fun character(codepoint: Int, modifiers: Int) {
         val target = keyTarget() ?: return
-        val keyCode = pendingKeyCode ?: return
+        val keyCode = pendingKeyCode ?: 0
         pendingKeyCode = null
-        typed[keyCode] = codepoint
+        if (keyCode != 0) typed[keyCode] = codepoint
         host?.input(target, ProducerHost.INPUT_KEY_DOWN, 0f, 0f, modifiers = macFlags(modifiers, pendingRepeat),
             keyCode = keyCode, character = codepoint, unmodified = codepoint)
     }
