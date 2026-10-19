@@ -28,6 +28,21 @@ class ShortcutsTest {
     }
 
     @Test
+    fun `on a Mac the table's Mac keys stand in, and the browser's win in a web window`() {
+        val mac = Shortcuts(java.io.File("../../web/apps/system/public/shortcuts.json").readText(), mac = true)
+        assertEquals(ShortcutAction.CLOSE_TAB, mac.resolve(KeyChord("W", meta = true), inBrowser = true, captureOn = false))
+        assertEquals(ShortcutAction.CLOSE_WINDOW, mac.resolve(KeyChord("W", meta = true), inBrowser = false, captureOn = false))
+        assertEquals(ShortcutAction.CLOSE_WINDOW, mac.resolve(KeyChord("W", meta = true, shift = true), inBrowser = true, captureOn = false))
+        assertEquals(ShortcutAction.RELOAD, mac.resolve(KeyChord("R", meta = true), inBrowser = true, captureOn = false))
+        assertEquals(ShortcutAction.RECENTER, mac.resolve(KeyChord("E", meta = true), inBrowser = true, captureOn = false))
+        assertEquals(ShortcutAction.BACK, mac.resolve(KeyChord("[", meta = true), inBrowser = true, captureOn = false))
+        assertNull(mac.resolve(KeyChord("W", alt = true), inBrowser = false, captureOn = false))
+        assertEquals(ShortcutAction.TOGGLE_LAUNCHER, mac.resolve(KeyChord("Space", meta = true), inBrowser = true, captureOn = false))
+        assertNull(mac.resolve(KeyChord("Meta"), inBrowser = false, captureOn = false))
+        assertNull(shortcuts.resolve(KeyChord("Q", meta = true), inBrowser = false, captureOn = true))
+    }
+
+    @Test
     fun `every entry in the shared table names a known action`() {
         val table = org.json.JSONArray(java.io.File("../../web/apps/system/public/shortcuts.json").readText())
         assertTrue(table.length() > 20)

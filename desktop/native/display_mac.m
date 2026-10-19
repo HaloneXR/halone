@@ -58,3 +58,11 @@ int32_t halone_window_overscan(void *window, uint32_t display, int32_t margin) {
     }
     return -1;
 }
+
+void halone_menu_without_quit(void) {
+    for (NSMenuItem *item in NSApp.mainMenu.itemArray) {
+        for (NSMenuItem *entry in item.submenu.itemArray) {
+            if (entry.action == @selector(terminate:)) entry.keyEquivalent = @"";
+        }
+    }
+}

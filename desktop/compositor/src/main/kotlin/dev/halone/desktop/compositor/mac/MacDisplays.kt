@@ -27,6 +27,7 @@ class MacDisplays private constructor(private val display: Int, private val x: I
         fun halone_display_beside(display: Int, x: IntByReference, y: IntByReference): Int
         fun halone_cursor_to_main()
         fun halone_window_overscan(window: Long, display: Int, margin: Int): Int
+        fun halone_menu_without_quit()
     }
 
     companion object {
@@ -57,6 +58,9 @@ class MacDisplays private constructor(private val display: Int, private val x: I
             if (native.halone_window_overscan(glfwGetCocoaWindow(window), glfwGetCocoaMonitor(monitor), OVERSCAN) == 0) OVERSCAN else 0
 
         private const val OVERSCAN = 1
+
+        /** Takes ⌘Q off GLFW's application menu, where it quit Halone; on a Mac it closes a Halone window. */
+        fun keepQuitForHalone() = native.halone_menu_without_quit()
 
         /** The cursor to the middle of the display with the menu bar. */
         fun cursorToMain() = native.halone_cursor_to_main()

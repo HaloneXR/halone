@@ -136,7 +136,7 @@ class DesktopShell(
         sockets = tcp,
     )
 
-    private val shortcuts = Shortcuts(File(webRoot, Shortcuts.ASSET).readText())
+    private val shortcuts = Shortcuts(File(webRoot, Shortcuts.ASSET).readText(), mac = System.getProperty("os.name").lowercase().contains("mac"))
 
     private val shortcutKeys = ShortcutKeys { chord ->
         runCatching { shell.runShortcut(chord, shortcuts, scene.keyTarget, captureOn = false, log = log) }
@@ -159,7 +159,10 @@ class DesktopShell(
         in GLFW_KEY_A..GLFW_KEY_Z -> ('A' + (key - GLFW_KEY_A)).toString()
         in GLFW_KEY_F1..GLFW_KEY_F12 -> "F${key - GLFW_KEY_F1 + 1}"
         GLFW_KEY_TAB -> "Tab"
+        GLFW_KEY_SPACE -> "Space"
         GLFW_KEY_GRAVE_ACCENT -> "`"
+        GLFW_KEY_LEFT_BRACKET -> "["
+        GLFW_KEY_RIGHT_BRACKET -> "]"
         GLFW_KEY_ESCAPE -> "Escape"
         GLFW_KEY_PRINT_SCREEN -> "PrintScreen"
         GLFW_KEY_LEFT -> "ArrowLeft"

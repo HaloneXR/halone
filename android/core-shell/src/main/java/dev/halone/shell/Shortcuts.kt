@@ -50,14 +50,16 @@ enum class ShortcutAction(val wire: String) {
  * it the fallbacks stand in, and with it they are left to apps, such as a
  * terminal's Alt+letter.
  */
-class Shortcuts(json: String) {
+class Shortcuts(json: String, mac: Boolean = false) {
     private data class Binding(val chord: KeyChord, val action: ShortcutAction, val browserOnly: Boolean, val fallback: Boolean)
 
     private val bindings: List<Binding> = JSONArray(json).let { array ->
-        (0 until array.length()).map { index ->
+        (0 until array.length()).mapNotNull { index ->
             val entry = array.getJSONObject(index)
+            val keys = if (mac && entry.has("mac")) entry.getString("mac") else entry.optString("keys")
+            if (keys.isEmpty()) return@mapNotNull null
             Binding(
-                chord = KeyChord.parse(entry.getString("keys")),
+                chord = KeyChord.parse(keys),
                 action = ShortcutAction.entries.first { it.wire == entry.getString("action") },
                 browserOnly = entry.optBoolean("browser"),
                 fallback = entry.optBoolean("fallback"),
@@ -65,9 +67,13 @@ class Shortcuts(json: String) {
         }
     }
 
-    /** The action for [chord], in a web window when [inBrowser], with the fallbacks only while [captureOn] is false. */
+    /**
+     * The action for [chord], in a web window when [inBrowser], with the fallbacks only while [captureOn] is false.
+     * In a web window the browser's own binding wins, as ⌘W closes the tab there and the window elsewhere.
+     */
     fun resolve(chord: KeyChord, inBrowser: Boolean, captureOn: Boolean): ShortcutAction? =
-        bindings.firstOrNull { it.chord == chord && (inBrowser || !it.browserOnly) && !(captureOn && it.fallback) }?.action
+        bindings.filter { it.chord == chord && (inBrowser || !it.browserOnly) && !(captureOn && it.fallback) }
+            .let { matches -> matches.firstOrNull { it.browserOnly } ?: matches.firstOrNull() }?.action
 
     companion object {
         const val ASSET = "shortcuts.json"

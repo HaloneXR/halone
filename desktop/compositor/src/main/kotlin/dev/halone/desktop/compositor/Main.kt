@@ -32,6 +32,7 @@ import dev.halone.desktop.compositor.lease.compositorKeymap
 import dev.halone.desktop.compositor.linux.LinuxHelper
 import dev.halone.desktop.compositor.linux.RawKeyboard
 import dev.halone.desktop.compositor.mac.MacDisplays
+import dev.halone.desktop.compositor.mac.MacKeys
 import dev.halone.desktop.shell.AdBlocker
 import dev.halone.desktop.shell.AppData
 import dev.halone.desktop.shell.FileStore
@@ -195,7 +196,7 @@ private fun run(args: Array<String>) {
     // Killed or crashed, the glasses still go back to 2D and to their place among the displays.
     if (session != null) Runtime.getRuntime().addShutdownHook(Thread { tucked?.close(); session.close() })
     fun saved(key: String) = runCatching { JSONObject(File(AppData.dir, "settings.json").readText()).optBoolean(key, false) }.getOrDefault(false)
-    var rawKeyboardOn = isLinux && saved(RAW_KEYBOARD)
+    var rawKeyboardOn = (isLinux || isMac) && saved(RAW_KEYBOARD)
     var helper: LinuxHelper? = null
     fun helper(): LinuxHelper? {
         if (helper?.alive != true) helper = if (isLinux) LinuxHelper.start() else null
@@ -288,6 +289,7 @@ private fun run(args: Array<String>) {
         window = glfwCreateWindow(1600, 900, "Halone", 0, 0)
     }
     glfwFocusWindow(window)
+    if (isMac) MacDisplays.keepQuitForHalone()
 
     val blind = options.ab || options.scanSweep || options.aheadSweep
     val abLetters = when {
@@ -465,9 +467,20 @@ private fun run(args: Array<String>) {
     // here as the hardware sends them, past the desktop's shortcuts and its held-key accents.
     val rawKeys = if (isLinux) runCatching { RawKeyboard(compositorKeymap()) }.onFailure { println("raw keyboard: ${it.message}") }.getOrNull() else null
     var keysGivenBack = false
+    var macKeys: MacKeys? = null
     fun holdKeys(focused: Boolean) {
         keysGivenBack = false
+        if (isMac) {
+            if (focused && rawKeyboardOn && macKeys == null) macKeys = MacKeys.start()
+            macKeys?.hold(focused && rawKeyboardOn)
+            return
+        }
         if (focused && rawKeyboardOn && rawKeys != null) helper()?.grab() else helper?.release()
+    }
+    fun giveKeysBack() {
+        keysGivenBack = true
+        helper?.release()
+        macKeys?.hold(false)
     }
     fun freeCursor() {
         captured = false
@@ -475,8 +488,7 @@ private fun run(args: Array<String>) {
         if (tucked != null) MacDisplays.cursorToMain()
     }
     fun releaseToDesktop() {
-        keysGivenBack = true
-        helper?.release()
+        giveKeysBack()
         freeCursor()
         if (lease != null) glfwIconifyWindow(window)
     }
@@ -523,8 +535,7 @@ private fun run(args: Array<String>) {
                 glfwSetWindowShouldClose(window, true)
             } else {
                 freeCursor()
-                keysGivenBack = true
-                helper?.release()
+                giveKeysBack()
             }
             GLFW_KEY_R -> {
                 yaw = 0f
@@ -546,17 +557,18 @@ private fun run(args: Array<String>) {
     }
     glfwSetCharCallback(window) { _, codepoint -> if (helper?.holding != true) onChar(codepoint) }
     glfwSetKeyCallback(window) { _, key, scancode, action, modifiers -> if (helper?.holding != true) onKey(key, scancode, action, modifiers) }
-    if (rawKeyboardOn) helper()
+    if (rawKeyboardOn) if (isMac) MacKeys.trusted(prompt = true) else helper()
     // Taken in the first frame, once the loop is there to send the helper its heartbeat.
     var keysTaken = false
     desktopShell?.let { shell ->
-        shell.keyCapture = { helper?.holding == true }
+        shell.keyCapture = { helper?.holding == true || macKeys?.let { it.holding && !it.secureInput } == true }
         shell.onReleaseToDesktop = ::releaseToDesktop
         shell.onSettingChanged = { settings, key ->
             fun value() = settings.boolean(key)
             when (key) {
                 RAW_KEYBOARD -> {
-                    rawKeyboardOn = isLinux && value()
+                    rawKeyboardOn = (isLinux || isMac) && value()
+                    if (isMac && rawKeyboardOn) MacKeys.trusted(prompt = true)
                     holdKeys(glfwGetWindowAttrib(window, GLFW_FOCUSED) == GLFW_TRUE)
                 }
                 // Applied at once only while the glasses are not in use: reverting would take a leased
@@ -606,6 +618,12 @@ private fun run(args: Array<String>) {
         if (!keysTaken) {
             keysTaken = true
             holdKeys(glfwGetWindowAttrib(window, GLFW_FOCUSED) == GLFW_TRUE)
+        }
+        macKeys?.drain(::onKey)
+        // Granted while Halone runs, the permission lets the tap start on the next focus; checked about once a second.
+        if (isMac && rawKeyboardOn && macKeys == null && !keysGivenBack && frameCount % 60 == 0L &&
+            glfwGetWindowAttrib(window, GLFW_FOCUSED) == GLFW_TRUE && MacKeys.trusted(prompt = false)) {
+            holdKeys(true)
         }
         helper?.let { h ->
             // The helper lets go when frames stop (a stall, or waiting for the glasses); take the keys back after.

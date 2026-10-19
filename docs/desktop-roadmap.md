@@ -480,6 +480,22 @@ regularly so the branch stays close.
   - Typing text is not affected, and auto-repeated keys reach pages as
     repeats (`KeyboardEvent.repeat`).
 
+- **On macOS, raw keyboard mode takes the shortcuts, not the typing.** An
+  event tap, allowed by the Accessibility permission, takes ⌘ and Ctrl
+  combinations, the function row and the Globe key while Halone's window is
+  focused; plain typing still goes through GLFW, so dead keys and input
+  methods keep working. ⌘⌥Esc stays with Force Quit. While Secure Input is on
+  (a password field focused anywhere) macOS sends the tap nothing and keeps
+  its shortcuts. In a development run the permission belongs to the terminal
+  that started `java`; a packaged, signed Halone.app asks under its own name,
+  and an ad-hoc signature loses the grant on every rebuild.
+- **Shortcuts follow the Mac on the Mac.** `shortcuts.json` has a `mac`
+  column: ⌘Space opens the launcher (⌘ alone, pressed and abandoned, would
+  keep opening it), ⌘W closes the tab in a web window and the window
+  elsewhere, ⌘⇧W and ⌘Q close the window, ⌘E recenters, and the browser's
+  keys are ⌘T, ⌘L, ⌘R, ⌘[ and ⌘]. The Alt fallbacks are left out there, as
+  Option+letter types characters.
+
 ## Open questions
 
 - Packaging per OS, and whether to sign and notarize builds during the
