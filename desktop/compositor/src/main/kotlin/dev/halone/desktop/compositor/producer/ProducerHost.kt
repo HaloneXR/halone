@@ -62,6 +62,8 @@ class ProducerHost(
     log: File,
     /** Served as https://halone.local/, where the system apps live; null serves nothing there. */
     webRoot: File? = null,
+    /** Unpacked extensions every page runs with, such as the ad blocker; loaded only at start. */
+    extensions: List<File> = emptyList(),
 ) : AutoCloseable {
     private val transport = ProducerTransport.forThisPlatform()
     private val process: Process
@@ -116,7 +118,10 @@ class ProducerHost(
                 "--spike-panels=${specs.joinToString(",")}",
                 "--spike-margin=$marginMs",
                 "--spike-surfaces=$SURFACES",
-            ) + listOfNotNull(webRoot?.let { "--halone-web-root=${it.absolutePath}" }),
+            ) + listOfNotNull(
+                webRoot?.let { "--halone-web-root=${it.absolutePath}" },
+                extensions.takeIf { it.isNotEmpty() }?.let { list -> "--halone-extensions=" + list.joinToString(",") { it.absolutePath } },
+            ),
         ).redirectErrorStream(true).redirectOutput(log).start()
     }
 

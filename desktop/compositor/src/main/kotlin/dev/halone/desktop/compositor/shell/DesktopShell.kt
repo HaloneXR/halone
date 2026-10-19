@@ -7,6 +7,7 @@ import dev.halone.desktop.compositor.producer.ProducerHost
 import dev.halone.desktop.compositor.render.DesktopCompositor
 import dev.halone.desktop.compositor.render.DesktopPanel
 import dev.halone.desktop.compositor.vk.TextureSource
+import dev.halone.desktop.shell.AdBlocker
 import dev.halone.desktop.shell.AppData
 import dev.halone.desktop.shell.BridgeSockets
 import dev.halone.desktop.shell.DevServer
@@ -67,6 +68,8 @@ class DesktopShell(
     private val version: String,
     deviceName: String,
     private val log: (String) -> Unit,
+    /** The browser's ad blocker, kept current here for the producer's next start; null where there is no producer. */
+    private val adBlocker: AdBlocker? = null,
 ) : ShellPlatform<DesktopPanel>, AutoCloseable {
     private val queue = ConcurrentLinkedQueue<Runnable>()
     private val io = Executors.newSingleThreadExecutor { Thread(it, "shell-io").apply { isDaemon = true } }
@@ -176,6 +179,7 @@ class DesktopShell(
     }
 
     fun start() {
+        adBlocker?.takeIf { shell.settings.boolean(ShellSettings.BROWSER_AD_BLOCKER) }?.let { background.execute(it::update) }
         applySettings(shell.settings, null)
         shell.openOverlays()
     }
@@ -476,6 +480,11 @@ class DesktopShell(
         changedKey?.let { key -> onSettingChanged?.invoke(settings, key) }
         settings.applyTo(scene)
         if (changedKey == ShellSettings.BROWSER_AUTO_HIDE_TOOLBAR) browsers.values.forEach { it.settingsChanged() }
+        // Chromium loads extensions only at start, so the ad blocker comes and goes with the next one.
+        if (changedKey == ShellSettings.BROWSER_AD_BLOCKER) {
+            if (settings.boolean(changedKey)) adBlocker?.let { background.execute(it::update) }
+            notice(if (settings.boolean(changedKey)) "The ad blocker turns on next time Halone starts" else "The ad blocker turns off next time Halone starts")
+        }
         if (changedKey == ShellSettings.PANEL_DISTANCE_METRES) {
             val metres = distance()
             (scene.panels + listOfNotNull(scene.dock, scene.launcher)).forEach { panel ->

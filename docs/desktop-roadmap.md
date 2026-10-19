@@ -434,6 +434,15 @@ regularly so the branch stays close.
 
 ## Known limitations
 
+- **The ad blocker is uBlock Origin Lite, not uBlock Origin.** Chromium
+  dropped Manifest V2 in version 150, and CEF 154 builds on a later one, so
+  the desktop runs the MV3 uBlock Origin Lite where Android's GeckoView runs
+  uBlock Origin. It loads in windowless browsers, network blocking and
+  content scripts alike, in its default Optimal mode. It is installed from
+  its GitHub releases into the app data folder, as Android installs uBlock
+  Origin from addons.mozilla.org, and allowed in private tabs through
+  Chromium's own preferences. Chromium only loads extensions at start, so
+  turning the setting on or off takes effect the next time Halone starts.
 - **Websites can't use H.264, HEVC or AAC.** Stock CEF builds play VP9, AV1,
   Opus and MP3, but not these (found in spike 2). Large streaming sites ask the
   browser what it supports and fall back to VP9 or AV1. But sites that serve a

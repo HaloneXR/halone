@@ -1,12 +1,15 @@
 #pragma once
 
 #include <algorithm>
+#include <climits>
+#include <cstdlib>
 #include <cstring>
 #include <sstream>
 #include <string>
 #include <vector>
 
 #include "include/cef_browser.h"
+#include "include/cef_command_line.h"
 #include "include/cef_parser.h"
 #include "include/cef_request_context.h"
 #include "include/cef_scheme.h"
@@ -237,6 +240,48 @@ inline void commonSwitches(CefRefPtr<CefCommandLine> commandLine) {
     commandLine->AppendSwitchWithValue("remote-debugging-port", "9230");
     commandLine->AppendSwitchWithValue("remote-allow-origins", "*");
     commandLine->AppendSwitchWithValue("enable-features", "OverlayScrollbar");
+    // --halone-extensions: unpacked extensions to run in every page, such as the ad blocker. Chromium only loads
+    // extensions at start.
+    if (commandLine->HasSwitch("halone-extensions"))
+        commandLine->AppendSwitchWithValue("load-extension", commandLine->GetSwitchValue("halone-extensions"));
+}
+
+// Lets the extensions given at start run in private tabs too, which are Chromium's off-the-record profiles, as
+// Android lets uBlock Origin run in private browsing. The setting is kept with a checksum, so only Chromium's own
+// preference service can set it: a hand-edited profile is put back. Call once the context is initialized.
+inline void allowExtensionsInPrivate() {
+    std::string list = CefCommandLine::GetGlobalCommandLine()->GetSwitchValue("halone-extensions").ToString();
+    if (list.empty()) return;
+    std::vector<std::string> paths;
+    std::stringstream stream(list);
+    for (std::string path; std::getline(stream, path, ',');) {
+        char resolved[PATH_MAX];
+        paths.push_back(realpath(path.c_str(), resolved) ? resolved : path);
+    }
+    CefRefPtr<CefRequestContext> global = CefRequestContext::GetGlobalContext();
+    CefRefPtr<CefValue> settings = global->GetPreference("extensions.settings");
+    if (!settings || settings->GetType() != VTYPE_DICTIONARY) return;
+    // GetDictionary answers views into this copy, so the entries are changed where they are.
+    CefRefPtr<CefDictionaryValue> all = settings->GetDictionary()->Copy(false);
+    CefDictionaryValue::KeyList keys;
+    all->GetKeys(keys);
+    bool changed = false;
+    for (const CefString &key : keys) {
+        CefRefPtr<CefDictionaryValue> entry = all->GetDictionary(key);
+        if (!entry) continue;
+        char resolved[PATH_MAX];
+        std::string path = entry->GetString("path").ToString();
+        std::string real = realpath(path.c_str(), resolved) ? resolved : path;
+        if (std::find(paths.begin(), paths.end(), real) == paths.end() || entry->GetBool("incognito")) continue;
+        entry->SetBool("incognito", true);
+        changed = true;
+    }
+    if (!changed) return;
+    CefRefPtr<CefValue> value = CefValue::Create();
+    value->SetDictionary(all);
+    CefString error;
+    if (!global->SetPreference("extensions.settings", value, error))
+        fprintf(stderr, "producer: could not allow extensions in private tabs: %s\n", error.ToString().c_str());
 }
 
 inline std::string text(const char *field, size_t size) { return std::string(field, strnlen(field, size)); }

@@ -967,6 +967,7 @@ public:
 
     void OnContextInitialized() override {
         producer::serveWebRoot(gWebRoot);
+        producer::allowExtensionsInPrivate();
         gContextReady = true;
         for (Panel *p : livePanels()) createBrowser(p);
     }

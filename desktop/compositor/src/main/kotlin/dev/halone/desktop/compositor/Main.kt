@@ -31,7 +31,10 @@ import org.lwjgl.vulkan.VK10.vkDeviceWaitIdle
 import dev.halone.desktop.compositor.lease.compositorKeymap
 import dev.halone.desktop.compositor.linux.LinuxHelper
 import dev.halone.desktop.compositor.linux.RawKeyboard
+import dev.halone.desktop.shell.AdBlocker
 import dev.halone.desktop.shell.AppData
+import dev.halone.desktop.shell.FileStore
+import dev.halone.shell.ShellSettings
 import org.json.JSONObject
 import java.io.File
 import kotlin.math.sin
@@ -42,6 +45,16 @@ private const val MOUSE_DEGREES_PER_PIXEL = 0.08f
 private const val PACE_TIMEOUT_NS = 100_000_000L
 private const val RECONNECT_TIMEOUT_MS = 60_000L
 private const val RAW_KEYBOARD = "input.rawKeyboard"
+
+/** How long the first start waits for the ad blocker to download before going on without it. */
+private const val AD_BLOCKER_WAIT_MS = 20_000L
+
+/** Whether the saved settings have the ad blocker on, by the system apps' schema, where it is on unless turned off. */
+private fun adBlockerOn(systemApps: File?): Boolean {
+    systemApps ?: return false
+    val schema = File(systemApps, ShellSettings.SCHEMA_ASSET).takeIf { it.isFile }?.readText() ?: return false
+    return runCatching { ShellSettings(FileStore("settings.json", Runnable::run), schema).boolean(ShellSettings.BROWSER_AD_BLOCKER) }.getOrDefault(false)
+}
 private const val PATCH_GLASSES_EDID = "display.patchGlassesEdid"
 private const val HEARTBEAT_SECONDS = 0.25
 private const val EDID_WAIT_MS = 15_000L
@@ -302,9 +315,11 @@ fun main(args: Array<String>) {
     }
     var frameCount = 0L
     val shellApps = options.shellApps?.takeIf { options.producer != null }
+    val adBlocker = shellApps?.let { AdBlocker(::println) }
     val host = options.producer?.let { executable ->
         val specs = if (shellApps != null) emptyList() else options.producerPanels
-        ProducerHost(vk, executable, specs, options.producerMarginMs, File(options.producerLog), webRoot = shellApps).also { host ->
+        ProducerHost(vk, executable, specs, options.producerMarginMs, File(options.producerLog), webRoot = shellApps,
+            extensions = listOfNotNull(adBlocker?.takeIf { adBlockerOn(shellApps) }?.prepare(AD_BLOCKER_WAIT_MS))).also { host ->
             host.onTextureClosed = compositor::forget
             if (shellApps != null) return@also
             val byProducer = HashMap<Int, DesktopPanel>()
@@ -335,6 +350,7 @@ fun main(args: Array<String>) {
             version = object {}.javaClass.getResource("/halone-version.txt")?.readText()?.trim() ?: "0.0.0-dev",
             deviceName = session?.device?.let { it.toString() } ?: "Desktop",
             log = ::println,
+            adBlocker = adBlocker,
         )
     } else {
         null
