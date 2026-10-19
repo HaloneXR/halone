@@ -481,6 +481,8 @@ struct Panel {
     std::string origin;
     std::string root;
     std::string script;
+    bool isPrivate = false;
+    producer::Page page;
     bool closing = false;
     producer::Window beginToPaint;
     producer::Window blit;
@@ -538,6 +540,27 @@ void sendCursor(Panel *p, const char *name) {
     c.panel = p->number;
     snprintf(c.name, sizeof c.name, "%s", name);
     sendPacket(&c, sizeof c);
+}
+
+void sendPage(Panel *p, const producer::Page &page) {
+    if (page == p->page) return;
+    p->page = page;
+    spike_page g = {};
+    g.id = SPIKE_MSG_PAGE;
+    g.panel = p->number;
+    g.flags = page.flags;
+    snprintf(g.title, sizeof g.title, "%s", page.title.c_str());
+    snprintf(g.url, sizeof g.url, "%s", page.url.c_str());
+    sendPacket(&g, sizeof g);
+}
+
+void sendPopup(Panel *p, const std::string &url, bool background) {
+    spike_popup u = {};
+    u.id = SPIKE_MSG_POPUP;
+    u.panel = p->number;
+    u.background = background ? 1 : 0;
+    snprintf(u.url, sizeof u.url, "%s", url.c_str());
+    sendPacket(&u, sizeof u);
 }
 
 void deliver(Panel *p, const CefAcceleratedPaintInfo &info) {
@@ -633,6 +656,35 @@ public:
         if (panel_) producer::injectBridge(frame, panel_->origin, panel_->script);
     }
 
+    void OnTitleChange(CefRefPtr<CefBrowser>, const CefString &title) override {
+        if (!panel_) return;
+        producer::Page page = panel_->page;
+        page.title = title.ToString();
+        sendPage(panel_, page);
+    }
+
+    void OnAddressChange(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, const CefString &url) override {
+        if (!panel_ || !frame->IsMain()) return;
+        producer::Page page = panel_->page;
+        page.url = url.ToString();
+        sendPage(panel_, page);
+    }
+
+    void OnLoadingStateChange(CefRefPtr<CefBrowser>, bool isLoading, bool canGoBack, bool canGoForward) override {
+        if (!panel_) return;
+        producer::Page page = panel_->page;
+        page.flags = producer::pageFlags(isLoading, canGoBack, canGoForward);
+        sendPage(panel_, page);
+    }
+
+    // A new window or tab is the compositor's to open, as a tab of the same window.
+    bool OnBeforePopup(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, int, const CefString &url, const CefString &,
+                       WindowOpenDisposition disposition, bool, const CefPopupFeatures &, CefWindowInfo &,
+                       CefRefPtr<CefClient> &, CefBrowserSettings &, CefRefPtr<CefDictionaryValue> &, bool *) override {
+        if (panel_) sendPopup(panel_, url.ToString(), producer::inBackground(disposition));
+        return true;
+    }
+
     bool OnCursorChange(CefRefPtr<CefBrowser>, CefCursorHandle, cef_cursor_type_t type, const CefCursorInfo &) override {
         const char *name = producer::cssCursor(type);
         if (name != cursor_) {
@@ -663,7 +715,7 @@ void createBrowser(Panel *p) {
     info.external_begin_frame_enabled = true;
     CefBrowserSettings settings;
     settings.windowless_frame_rate = 60;
-    CefBrowserHost::CreateBrowser(info, new PanelClient(p), p->url, settings, nullptr, nullptr);
+    CefBrowserHost::CreateBrowser(info, new PanelClient(p), p->url, settings, nullptr, producer::contextFor(p->isPrivate));
 }
 
 class ProducerApp : public CefApp, public CefBrowserProcessHandler {
@@ -760,10 +812,16 @@ void handleOpen(const spike_open &o) {
     p->origin = producer::text(o.origin, sizeof o.origin);
     p->root = producer::text(o.root, sizeof o.root);
     p->script = producer::text(o.script, sizeof o.script);
+    p->isPrivate = (o.flags & SPIKE_OPEN_PRIVATE) != 0;
     gPanels[p->number] = p;
     allocateSurfaces(p);
     sendHello(p);
     if (gContextReady) createBrowser(p);
+}
+
+void handleCommand(const spike_command &c) {
+    Panel *p = findPanel(c.panel);
+    if (p && p->browser) producer::runCommand(p->browser, c.kind, producer::text(c.text, sizeof c.text));
 }
 
 void handleClose(spike_close c) {
@@ -843,6 +901,7 @@ void receive() {
         spike_release release;
         spike_open open;
         spike_close close;
+        spike_command command;
     };
     std::vector<char> buffer(sizeof(Packet));
     for (;;) {
@@ -855,6 +914,11 @@ void receive() {
             case SPIKE_MSG_RESIZE: CefPostTask(TID_UI, base::BindOnce(&handleResize, in.resize)); break;
             case SPIKE_MSG_RELEASE: CefPostTask(TID_UI, base::BindOnce(&handleRelease, in.release)); break;
             case SPIKE_MSG_CLOSE: CefPostTask(TID_UI, base::BindOnce(&handleClose, in.close)); break;
+            case SPIKE_MSG_COMMAND: {
+                auto command = std::make_shared<spike_command>(in.command);
+                CefPostTask(TID_UI, base::BindOnce([](std::shared_ptr<spike_command> c) { handleCommand(*c); }, command));
+                break;
+            }
             case SPIKE_MSG_OPEN: {
                 auto open = std::make_shared<spike_open>(in.open);
                 CefPostTask(TID_UI, base::BindOnce([](std::shared_ptr<spike_open> o) { handleOpen(*o); }, open));
