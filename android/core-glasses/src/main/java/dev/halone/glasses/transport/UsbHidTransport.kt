@@ -21,11 +21,17 @@ class UsbHidTransport internal constructor(
     private val connection: UsbDeviceConnection,
     internal val iface: UsbInterface,
     private val inEndpoint: UsbEndpoint,
-    private val outEndpoint: UsbEndpoint,
+    private val outEndpoint: UsbEndpoint?,
 ) : HidTransport {
 
     override fun write(packet: ByteArray, timeoutMs: Int): Int =
-        connection.bulkTransfer(outEndpoint, packet, packet.size, timeoutMs)
+        if (outEndpoint != null) {
+            connection.bulkTransfer(outEndpoint, packet, packet.size, timeoutMs)
+        } else {
+            // HID permits output reports on endpoint zero. VITURE's MCU can
+            // expose only an interrupt IN endpoint; requiring OUT rejects it.
+            connection.controlTransfer(0x21, 0x09, 0x0200, iface.id, packet, packet.size, timeoutMs)
+        }
 
     override fun read(into: ByteArray, timeoutMs: Int): Int =
         connection.bulkTransfer(inEndpoint, into, into.size, timeoutMs)
@@ -66,10 +72,10 @@ class UsbHidTransportProvider(
             if (ep.direction == UsbConstants.USB_DIR_OUT && outEp == null) outEp = ep
         }
 
-        if (inEp == null || outEp == null) {
+        if (inEp == null || (outEp == null && iface.interfaceClass != UsbConstants.USB_CLASS_HID)) {
             connection.releaseInterface(iface)
             return Result.failure(
-                IllegalStateException("interface $interfaceId lacks a bidirectional endpoint pair")
+                IllegalStateException("interface $interfaceId needs an IN endpoint and either OUT or HID output reports")
             )
         }
 
