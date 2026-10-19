@@ -45,6 +45,15 @@ class MachTransport : ProducerTransport {
             BridgeEvent.PAGE -> ProducerEvent(ProducerEvent.PAGE, event.panel, flags = event.flags,
                 title = cString(event.title), text = cString(event.text))
             BridgeEvent.POPUP -> ProducerEvent(ProducerEvent.POPUP, event.panel, flags = event.flags, text = cString(event.text))
+            ProducerEvent.CONTEXT -> ProducerEvent(ProducerEvent.CONTEXT, event.panel, flags = event.flags, number = event.number,
+                x = event.x, y = event.y, text = cString(event.text), extra = cString(event.extra), title = cString(event.title))
+            ProducerEvent.DOWNLOAD -> ProducerEvent(ProducerEvent.DOWNLOAD, event.panel, number = event.number, state = event.state,
+                received = event.received, total = event.total, text = cString(event.text), title = cString(event.title),
+                mime = cString(event.mime), path = cString(event.path))
+            ProducerEvent.PROMPT -> ProducerEvent(ProducerEvent.PROMPT, event.panel, number = event.number, flags = event.flags,
+                cursor = cString(event.name), title = cString(event.title))
+            ProducerEvent.FULLSCREEN -> ProducerEvent(ProducerEvent.FULLSCREEN, event.panel, flags = event.flags)
+            ProducerEvent.SCROLL -> ProducerEvent(ProducerEvent.SCROLL, event.panel, y = event.y)
             else -> null
         }
     }
@@ -68,6 +77,13 @@ class MachTransport : ProducerTransport {
 
     override fun command(panel: Int, kind: Int, text: String) {
         if (producerPort != 0) bridge.halone_send_command(producerPort, panel, kind, text)
+    }
+    override fun downloadControl(download: Int, cancel: Boolean, path: String) {
+        if (producerPort != 0) bridge.halone_send_download_control(producerPort, download, if (cancel) 1 else 0, path)
+    }
+
+    override fun answerPrompt(panel: Int, prompt: Int, allow: Boolean, remember: Boolean) {
+        if (producerPort != 0) bridge.halone_send_prompt_answer(producerPort, panel, prompt, if (allow) 1 else 0, if (remember) 1 else 0)
     }
 
     override fun closePanel(panel: Int) {

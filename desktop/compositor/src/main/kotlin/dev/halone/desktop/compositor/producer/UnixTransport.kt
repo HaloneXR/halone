@@ -30,7 +30,7 @@ import java.io.File
 @Structure.FieldOrder(
     "kind", "panel", "index", "count", "width", "height", "fourcc", "planes", "generation", "pad",
     "modifier", "seq", "begunNs", "paintedNs", "readyNs", "arrivedNs", "fds", "sizes", "offsets", "strides", "name",
-    "flags", "title", "text",
+    "flags", "title", "text", "number", "state", "received", "total", "x", "y", "extra", "path", "mime",
 )
 class UnixBridgeEvent : Structure() {
     @JvmField var kind = 0
@@ -57,6 +57,15 @@ class UnixBridgeEvent : Structure() {
     @JvmField var flags = 0
     @JvmField var title = ByteArray(BridgeEvent.TITLE_BYTES)
     @JvmField var text = ByteArray(BridgeEvent.URL_BYTES)
+    @JvmField var number = 0
+    @JvmField var state = 0
+    @JvmField var received = 0L
+    @JvmField var total = 0L
+    @JvmField var x = 0f
+    @JvmField var y = 0f
+    @JvmField var extra = ByteArray(BridgeEvent.URL_BYTES)
+    @JvmField var path = ByteArray(BridgeEvent.PATH_BYTES)
+    @JvmField var mime = ByteArray(BridgeEvent.MIME_BYTES)
 
     companion object {
         const val MAX_SURFACES = 8
@@ -78,6 +87,8 @@ interface UnixBridge : Library {
     fun halone_send_release(connection: Int, panel: Int, index: Int, generation: Int): Int
     fun halone_send_open(connection: Int, panel: Int, width: Int, height: Int, flags: Int, url: String, origin: String, script: String, root: String): Int
     fun halone_send_command(connection: Int, panel: Int, kind: Int, text: String): Int
+    fun halone_send_download_control(connection: Int, download: Int, cancel: Int, path: String): Int
+    fun halone_send_prompt_answer(connection: Int, panel: Int, prompt: Int, allow: Int, remember: Int): Int
     fun halone_send_close(connection: Int, panel: Int): Int
     fun halone_close(fd: Int)
 
@@ -122,6 +133,15 @@ class UnixTransport : ProducerTransport {
             ProducerEvent.PAGE -> ProducerEvent(ProducerEvent.PAGE, event.panel, flags = event.flags,
                 title = cString(event.title), text = cString(event.text))
             ProducerEvent.POPUP -> ProducerEvent(ProducerEvent.POPUP, event.panel, flags = event.flags, text = cString(event.text))
+            ProducerEvent.CONTEXT -> ProducerEvent(ProducerEvent.CONTEXT, event.panel, flags = event.flags, number = event.number,
+                x = event.x, y = event.y, text = cString(event.text), extra = cString(event.extra), title = cString(event.title))
+            ProducerEvent.DOWNLOAD -> ProducerEvent(ProducerEvent.DOWNLOAD, event.panel, number = event.number, state = event.state,
+                received = event.received, total = event.total, text = cString(event.text), title = cString(event.title),
+                mime = cString(event.mime), path = cString(event.path))
+            ProducerEvent.PROMPT -> ProducerEvent(ProducerEvent.PROMPT, event.panel, number = event.number, flags = event.flags,
+                cursor = cString(event.name), title = cString(event.title))
+            ProducerEvent.FULLSCREEN -> ProducerEvent(ProducerEvent.FULLSCREEN, event.panel, flags = event.flags)
+            ProducerEvent.SCROLL -> ProducerEvent(ProducerEvent.SCROLL, event.panel, y = event.y)
             else -> null
         }
     }
@@ -150,6 +170,13 @@ class UnixTransport : ProducerTransport {
 
     override fun command(panel: Int, kind: Int, text: String) {
         if (connection >= 0) bridge.halone_send_command(connection, panel, kind, text)
+    }
+    override fun downloadControl(download: Int, cancel: Boolean, path: String) {
+        if (connection >= 0) bridge.halone_send_download_control(connection, download, if (cancel) 1 else 0, path)
+    }
+
+    override fun answerPrompt(panel: Int, prompt: Int, allow: Boolean, remember: Boolean) {
+        if (connection >= 0) bridge.halone_send_prompt_answer(connection, panel, prompt, if (allow) 1 else 0, if (remember) 1 else 0)
     }
 
     override fun closePanel(panel: Int) {

@@ -157,8 +157,10 @@ class InputRouter(
             focused = target.index
             pressedInLayer = target.inLayer
             hit.panel.keysToLayer = target.inLayer
+            if (!target.inLayer) hit.panel.onContentInput?.invoke(true)
         } else {
             buttons = buttons and mask.inv()
+            if (pressedInLayer == false) hit.panel.onContentInput?.invoke(false)
             if (buttons == 0) pressedInLayer = null
         }
         host.input(target.index, if (pressed) ProducerHost.INPUT_DOWN else ProducerHost.INPUT_UP, target.x, target.y,
@@ -169,6 +171,7 @@ class InputRouter(
         val hit = scene.hitTest(direction)?.takeIf { it.part == HitPart.CONTENT } ?: return
         val target = target(hit.panel, hit.hit.x, hit.hit.y) ?: return
         val host = host ?: return
+        if (!target.inLayer) hit.panel.onContentInput?.invoke(null)
         host.input(target.index, ProducerHost.INPUT_WHEEL, target.x, target.y,
             dx = (dx * WHEEL_PIXELS).toFloat(), dy = (dy * WHEEL_PIXELS).toFloat(), modifiers = macFlags(modifiers))
     }

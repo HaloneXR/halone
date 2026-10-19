@@ -14,6 +14,9 @@
 #include "include/cef_client.h"
 #include "include/cef_command_line.h"
 #include "include/cef_parser.h"
+#include "include/cef_context_menu_handler.h"
+#include "include/cef_download_handler.h"
+#include "include/cef_permission_handler.h"
 #include "include/cef_request_context.h"
 #include "include/cef_scheme.h"
 #include "include/cef_stream.h"
@@ -47,6 +50,7 @@ mach_port_t gInbox = MACH_PORT_NULL;
 id<MTLDevice> gDevice;
 id<MTLCommandQueue> gQueue;
 double gMarginMs = 4;
+const double DOWNLOAD_PROGRESS_MS = 250;
 uint32_t gSurfaceCount = 4;
 dispatch_source_t gBeginTimer;
 
@@ -262,7 +266,133 @@ void sendPopup(Panel *p, const std::string &url, bool background) {
     sendOrQuit(&u.header, sizeof u);
 }
 
-class PanelClient : public CefClient, public CefRenderHandler, public CefLifeSpanHandler, public CefDisplayHandler, public CefLoadHandler {
+template <typename Message>
+void sendMessage(Message &m, mach_msg_id_t id) {
+    m.header.msgh_bits = MACH_MSGH_BITS_SET(MACH_MSG_TYPE_COPY_SEND, 0, 0, 0);
+    m.header.msgh_size = sizeof m;
+    m.header.msgh_remote_port = gConsumer;
+    m.header.msgh_id = id;
+    sendOrQuit(&m.header, sizeof m);
+}
+
+void sendContext(Panel *p, int x, int y, const producer::Context &context) {
+    spike_context c = {};
+    c.panel = p->number;
+    c.flags = context.flags;
+    c.media = context.media;
+    c.x = (float)x;
+    c.y = (float)y;
+    strlcpy(c.link, context.link.c_str(), sizeof c.link);
+    strlcpy(c.source, context.source.c_str(), sizeof c.source);
+    strlcpy(c.selection, context.selection.c_str(), sizeof c.selection);
+    sendMessage(c, SPIKE_MSG_CONTEXT);
+}
+
+// Downloads in flight, by CEF's id: the callback that says where one goes, until it is told, and the one that stops it.
+struct Download {
+    uint32_t panel = 0;
+    CefRefPtr<CefBeforeDownloadCallback> before;
+    CefRefPtr<CefDownloadItemCallback> item;
+    uint64_t lastSent = 0;
+    uint32_t lastState = 0;
+};
+std::map<uint32_t, Download> gDownloads;
+
+void sendDownload(uint32_t panel, CefRefPtr<CefDownloadItem> item, uint32_t state, const std::string &name) {
+    spike_download d = {};
+    d.panel = panel;
+    d.download = item->GetId();
+    d.state = state;
+    d.received = item->GetReceivedBytes();
+    d.total = item->GetTotalBytes();
+    strlcpy(d.url, item->GetURL().ToString().c_str(), sizeof d.url);
+    strlcpy(d.name, name.c_str(), sizeof d.name);
+    strlcpy(d.mime, item->GetMimeType().ToString().c_str(), sizeof d.mime);
+    strlcpy(d.path, item->GetFullPath().ToString().c_str(), sizeof d.path);
+    sendMessage(d, SPIKE_MSG_DOWNLOAD);
+}
+
+void handleDownloadControl(const spike_download_control &c) {
+    auto it = gDownloads.find(c.download);
+    if (it == gDownloads.end()) return;
+    Download &d = it->second;
+    std::string path = producer::text(c.path, sizeof c.path);
+    if (c.cancel) {
+        if (d.item) d.item->Cancel();
+        d.before = nullptr;
+        if (!d.item) gDownloads.erase(it);
+        return;
+    }
+    if (d.before && !path.empty()) {
+        d.before->Continue(path, false);
+        d.before = nullptr;
+    }
+}
+
+// Permission requests waiting on the wearer, by the number given them here.
+struct Prompt {
+    uint32_t panel = 0;
+    std::string kind;
+    std::string origin;
+    uint64_t cefId = 0;
+    CefRefPtr<CefPermissionPromptCallback> permission;
+    CefRefPtr<CefMediaAccessCallback> media;
+    uint32_t mediaRequested = 0;
+    std::string popup;
+    bool popupBackground = false;
+};
+std::map<uint32_t, Prompt> gPrompts;
+uint32_t gNextPrompt = 1;
+
+void sendPrompt(uint32_t panel, uint32_t id, const std::string &kind, const std::string &host, uint32_t flags) {
+    spike_prompt q = {};
+    q.panel = panel;
+    q.prompt = id;
+    q.flags = flags;
+    strlcpy(q.kind, kind.c_str(), sizeof q.kind);
+    strlcpy(q.host, host.c_str(), sizeof q.host);
+    sendMessage(q, SPIKE_MSG_PROMPT);
+}
+
+uint32_t ask(Panel *p, Prompt prompt, bool rememberable) {
+    uint32_t id = gNextPrompt++;
+    prompt.panel = p->number;
+    sendPrompt(p->number, id, prompt.kind, producer::hostOf(prompt.origin), rememberable ? SPIKE_PROMPT_REMEMBERABLE : 0);
+    gPrompts[id] = prompt;
+    return id;
+}
+
+void answer(Prompt &prompt, bool allow, bool remember);
+
+/** Denies what [panel]'s page still waits on, as Android does when a page starts or its tab closes. */
+void denyPrompts(uint32_t panel) {
+    for (auto it = gPrompts.begin(); it != gPrompts.end();) {
+        if (it->second.panel != panel) {
+            ++it;
+            continue;
+        }
+        answer(it->second, false, false);
+        sendPrompt(panel, it->first, "", "", SPIKE_PROMPT_GONE);
+        it = gPrompts.erase(it);
+    }
+}
+
+void sendFullscreen(Panel *p, bool fullscreen) {
+    spike_fullscreen f = {};
+    f.panel = p->number;
+    f.fullscreen = fullscreen ? 1 : 0;
+    sendMessage(f, SPIKE_MSG_FULLSCREEN);
+}
+
+void sendScroll(Panel *p, double y) {
+    spike_scroll c = {};
+    c.panel = p->number;
+    c.y = (float)y;
+    sendMessage(c, SPIKE_MSG_SCROLL);
+}
+
+class PanelClient : public CefClient, public CefRenderHandler, public CefLifeSpanHandler, public CefDisplayHandler, public CefLoadHandler,
+                    public CefContextMenuHandler, public CefDownloadHandler, public CefPermissionHandler {
 public:
     explicit PanelClient(Panel *panel) : panel_(panel) {}
 
@@ -270,6 +400,98 @@ public:
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
     CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
     CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
+    CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override { return this; }
+    CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
+    CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return this; }
+
+    // The shell shows the menu, as Android's PageMenu does; Chromium's own has nowhere to appear.
+    bool RunContextMenu(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, CefRefPtr<CefContextMenuParams> params,
+                        CefRefPtr<CefMenuModel>, CefRefPtr<CefRunContextMenuCallback> callback) override {
+        if (panel_) sendContext(panel_, params->GetXCoord(), params->GetYCoord(), producer::contextOf(params));
+        callback->Cancel();
+        return true;
+    }
+
+    bool OnBeforeDownload(CefRefPtr<CefBrowser>, CefRefPtr<CefDownloadItem> item, const CefString &suggested,
+                          CefRefPtr<CefBeforeDownloadCallback> callback) override {
+        if (!panel_) return false;
+        Download &d = gDownloads[item->GetId()];
+        d.panel = panel_->number;
+        d.before = callback;
+        d.lastState = SPIKE_DOWNLOAD_STARTED;
+        sendDownload(panel_->number, item, SPIKE_DOWNLOAD_STARTED, suggested.ToString());
+        return true;
+    }
+
+    void OnDownloadUpdated(CefRefPtr<CefBrowser>, CefRefPtr<CefDownloadItem> item, CefRefPtr<CefDownloadItemCallback> callback) override {
+        auto it = gDownloads.find(item->GetId());
+        if (it == gDownloads.end() || it->second.before) return;
+        Download &d = it->second;
+        d.item = callback;
+        uint32_t state = producer::downloadState(item);
+        uint64_t now = mach_absolute_time();
+        bool final = state != SPIKE_DOWNLOAD_PROGRESS;
+        if (!final && d.lastState == SPIKE_DOWNLOAD_PROGRESS && millis(now - d.lastSent) < DOWNLOAD_PROGRESS_MS) return;
+        d.lastSent = now;
+        d.lastState = state;
+        std::string path = item->GetFullPath().ToString();
+        sendDownload(d.panel, item, state, path.substr(path.find_last_of('/') + 1));
+        if (final) gDownloads.erase(it);
+    }
+
+    bool OnShowPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t promptId, const CefString &origin, uint32_t requested,
+                                CefRefPtr<CefPermissionPromptCallback> callback) override {
+        std::string kind = producer::permissionKind(requested);
+        if (!panel_ || kind.empty()) {
+            callback->Continue(CEF_PERMISSION_RESULT_DENY);
+            return true;
+        }
+        Prompt prompt;
+        prompt.kind = kind;
+        prompt.origin = origin.ToString();
+        prompt.cefId = promptId;
+        prompt.permission = callback;
+        ask(panel_, prompt, kind != "clipboard" && !panel_->isPrivate);
+        return true;
+    }
+
+    void OnDismissPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t promptId, cef_permission_request_result_t) override {
+        for (auto it = gPrompts.begin(); it != gPrompts.end(); ++it) {
+            if (it->second.cefId != promptId || !it->second.permission) continue;
+            sendPrompt(it->second.panel, it->first, "", "", SPIKE_PROMPT_GONE);
+            gPrompts.erase(it);
+            return;
+        }
+    }
+
+    // The microphone alone, as on Android; a camera is refused.
+    bool OnRequestMediaAccessPermission(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, const CefString &origin,
+                                        uint32_t requested, CefRefPtr<CefMediaAccessCallback> callback) override {
+        uint32_t video = CEF_MEDIA_PERMISSION_DEVICE_VIDEO_CAPTURE | CEF_MEDIA_PERMISSION_DESKTOP_VIDEO_CAPTURE;
+        if (!panel_ || (requested & video) || !(requested & CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE)) {
+            callback->Cancel();
+            return true;
+        }
+        Prompt prompt;
+        prompt.kind = "microphone";
+        prompt.origin = origin.ToString();
+        prompt.media = callback;
+        prompt.mediaRequested = requested;
+        ask(panel_, prompt, false);
+        return true;
+    }
+
+    void OnLoadStart(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, TransitionType) override {
+        if (panel_ && frame->IsMain()) denyPrompts(panel_->number);
+    }
+
+    void OnFullscreenModeChange(CefRefPtr<CefBrowser>, bool fullscreen) override {
+        if (panel_) sendFullscreen(panel_, fullscreen);
+    }
+
+    void OnScrollOffsetChanged(CefRefPtr<CefBrowser>, double, double y) override {
+        if (panel_) sendScroll(panel_, y);
+    }
 
     void GetViewRect(CefRefPtr<CefBrowser>, CefRect &rect) override { rect = CefRect(0, 0, panel_->width, panel_->height); }
 
@@ -323,11 +545,22 @@ public:
         sendPage(panel_, page);
     }
 
-    // A new window or tab is the compositor's to open, as a tab of the same window.
-    bool OnBeforePopup(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, int, const CefString &url, const CefString &,
-                       WindowOpenDisposition disposition, bool, const CefPopupFeatures &, CefWindowInfo &,
+    // A new window or tab is the compositor's to open, as a tab of the same window. One the wearer did not ask for
+    // waits on a popup prompt, as Gecko's popup blocker makes it on Android.
+    bool OnBeforePopup(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame>, int, const CefString &url, const CefString &,
+                       WindowOpenDisposition disposition, bool userGesture, const CefPopupFeatures &, CefWindowInfo &,
                        CefRefPtr<CefClient> &, CefBrowserSettings &, CefRefPtr<CefDictionaryValue> &, bool *) override {
-        if (panel_) sendPopup(panel_, url.ToString(), producer::inBackground(disposition));
+        if (!panel_) return true;
+        if (userGesture) {
+            sendPopup(panel_, url.ToString(), producer::inBackground(disposition));
+            return true;
+        }
+        Prompt prompt;
+        prompt.kind = "popup";
+        prompt.origin = browser->GetMainFrame()->GetURL().ToString();
+        prompt.popup = url.ToString();
+        prompt.popupBackground = producer::inBackground(disposition);
+        ask(panel_, prompt, false);
         return true;
     }
 
@@ -436,6 +669,28 @@ void handleOpen(const spike_open &o) {
     if (gContextReady) createBrowser(p);
 }
 
+void answer(Prompt &prompt, bool allow, bool remember) {
+    if (prompt.permission) {
+        prompt.permission->Continue(allow ? CEF_PERMISSION_RESULT_ACCEPT : CEF_PERMISSION_RESULT_DENY);
+        cef_content_setting_types_t type;
+        if (remember && producer::rememberedAs(prompt.kind, type)) {
+            CefRequestContext::GetGlobalContext()->SetContentSetting(prompt.origin, prompt.origin, type,
+                allow ? CEF_CONTENT_SETTING_VALUE_ALLOW : CEF_CONTENT_SETTING_VALUE_BLOCK);
+        }
+    } else if (prompt.media) {
+        if (allow) prompt.media->Continue(prompt.mediaRequested); else prompt.media->Cancel();
+    } else if (!prompt.popup.empty() && allow) {
+        if (Panel *p = findPanel(prompt.panel)) sendPopup(p, prompt.popup, prompt.popupBackground);
+    }
+}
+
+void handlePromptAnswer(const spike_prompt_answer &a) {
+    auto it = gPrompts.find(a.prompt);
+    if (it == gPrompts.end() || it->second.panel != a.panel) return;
+    answer(it->second, a.allow != 0, a.remember != 0);
+    gPrompts.erase(it);
+}
+
 void handleCommand(const spike_command &c) {
     Panel *p = findPanel(c.panel);
     if (p && p->browser) producer::runCommand(p->browser, c.kind, producer::text(c.text, sizeof c.text));
@@ -444,6 +699,7 @@ void handleCommand(const spike_command &c) {
 void handleClose(const spike_close &c) {
     Panel *p = findPanel(c.panel);
     if (!p) return;
+    denyPrompts(p->number);
     p->closing = true;
     if (p->browser) p->browser->GetHost()->CloseBrowser(true);
 }
@@ -489,6 +745,10 @@ void drainInbox() {
             handleClose(in.close.msg);
         } else if (in.header.msgh_id == SPIKE_MSG_COMMAND) {
             handleCommand(in.command.msg);
+        } else if (in.header.msgh_id == SPIKE_MSG_DOWNLOAD_CONTROL) {
+            handleDownloadControl(in.downloadControl.msg);
+        } else if (in.header.msgh_id == SPIKE_MSG_PROMPT_ANSWER) {
+            handlePromptAnswer(in.promptAnswer.msg);
         }
     }
     if (ticked) handleTick(latestTick);

@@ -19,7 +19,14 @@ enum {
     HALONE_EVENT_CURSOR = 3,
     HALONE_EVENT_PAGE = 4,
     HALONE_EVENT_POPUP = 5,
+    HALONE_EVENT_CONTEXT = 6,
+    HALONE_EVENT_DOWNLOAD = 7,
+    HALONE_EVENT_PROMPT = 8,
+    HALONE_EVENT_FULLSCREEN = 9,
+    HALONE_EVENT_SCROLL = 10,
 };
+
+#define COPY_FIELD(to, from) do { memcpy(to, from, sizeof(to)); (to)[sizeof(to) - 1] = 0; } while (0)
 
 typedef struct {
     int32_t kind;
@@ -46,6 +53,15 @@ typedef struct {
     uint32_t flags;
     char title[SPIKE_TITLE_BYTES];
     char text[SPIKE_URL_BYTES];
+    uint32_t number;
+    uint32_t state;
+    int64_t received;
+    int64_t total;
+    float x;
+    float y;
+    char extra[SPIKE_URL_BYTES];
+    char path[SPIKE_PATH_BYTES];
+    char mime[SPIKE_MIME_BYTES];
 } halone_unix_event;
 
 static uint64_t now_ns(void) {
@@ -91,6 +107,11 @@ int32_t halone_receive(int32_t connection, halone_unix_event *out, int32_t timeo
         spike_cursor cursor;
         spike_page page;
         spike_popup popup;
+        spike_context context;
+        spike_download download;
+        spike_prompt prompt;
+        spike_fullscreen fullscreen;
+        spike_scroll scroll;
     } in;
     char control[CMSG_SPACE(sizeof(int) * SPIKE_MAX_SURFACES)];
     struct iovec iov = {&in, sizeof in};
@@ -167,6 +188,45 @@ int32_t halone_receive(int32_t connection, halone_unix_event *out, int32_t timeo
         out->flags = in.popup.background;
         memcpy(out->text, in.popup.url, SPIKE_URL_BYTES);
         out->text[SPIKE_URL_BYTES - 1] = 0;
+    } else if (in.id == SPIKE_MSG_CONTEXT && (size_t)n >= sizeof in.context) {
+        spike_context *c = &in.context;
+        out->kind = HALONE_EVENT_CONTEXT;
+        out->panel = c->panel;
+        out->flags = c->flags;
+        out->number = c->media;
+        out->x = c->x;
+        out->y = c->y;
+        COPY_FIELD(out->text, c->link);
+        COPY_FIELD(out->extra, c->source);
+        COPY_FIELD(out->title, c->selection);
+    } else if (in.id == SPIKE_MSG_DOWNLOAD && (size_t)n >= sizeof in.download) {
+        spike_download *d = &in.download;
+        out->kind = HALONE_EVENT_DOWNLOAD;
+        out->panel = d->panel;
+        out->number = d->download;
+        out->state = d->state;
+        out->received = d->received;
+        out->total = d->total;
+        COPY_FIELD(out->text, d->url);
+        COPY_FIELD(out->title, d->name);
+        COPY_FIELD(out->mime, d->mime);
+        COPY_FIELD(out->path, d->path);
+    } else if (in.id == SPIKE_MSG_PROMPT && (size_t)n >= sizeof in.prompt) {
+        spike_prompt *q = &in.prompt;
+        out->kind = HALONE_EVENT_PROMPT;
+        out->panel = q->panel;
+        out->number = q->prompt;
+        out->flags = q->flags;
+        COPY_FIELD(out->name, q->kind);
+        COPY_FIELD(out->title, q->host);
+    } else if (in.id == SPIKE_MSG_FULLSCREEN && (size_t)n >= sizeof in.fullscreen) {
+        out->kind = HALONE_EVENT_FULLSCREEN;
+        out->panel = in.fullscreen.panel;
+        out->flags = in.fullscreen.fullscreen;
+    } else if (in.id == SPIKE_MSG_SCROLL && (size_t)n >= sizeof in.scroll) {
+        out->kind = HALONE_EVENT_SCROLL;
+        out->panel = in.scroll.panel;
+        out->y = in.scroll.y;
     }
     return 0;
 }
@@ -251,6 +311,27 @@ int32_t halone_send_command(int32_t connection, uint32_t panel, uint32_t kind, c
     c.kind = kind;
     copy_text(c.text, sizeof c.text, text);
     return send_packet(connection, &c, sizeof c);
+}
+
+int32_t halone_send_download_control(int32_t connection, uint32_t download, uint32_t cancel, const char *path) {
+    spike_download_control d;
+    memset(&d, 0, sizeof d);
+    d.id = SPIKE_MSG_DOWNLOAD_CONTROL;
+    d.download = download;
+    d.cancel = cancel;
+    copy_text(d.path, sizeof d.path, path);
+    return send_packet(connection, &d, sizeof d);
+}
+
+int32_t halone_send_prompt_answer(int32_t connection, uint32_t panel, uint32_t prompt, uint32_t allow, uint32_t remember) {
+    spike_prompt_answer a;
+    memset(&a, 0, sizeof a);
+    a.id = SPIKE_MSG_PROMPT_ANSWER;
+    a.panel = panel;
+    a.prompt = prompt;
+    a.allow = allow;
+    a.remember = remember;
+    return send_packet(connection, &a, sizeof a);
 }
 
 int32_t halone_send_close(int32_t connection, uint32_t panel) {

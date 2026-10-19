@@ -15,7 +15,13 @@ import dev.halone.desktop.shell.DesktopStorageAccess
 import dev.halone.desktop.shell.DesktopThumbnails
 import dev.halone.desktop.shell.FileStore
 import dev.halone.shell.AppInfo
+import dev.halone.desktop.compositor.producer.DownloadEvent
 import dev.halone.shell.Bookmarks
+import dev.halone.shell.DownloadNames
+import dev.halone.shell.HalonePackage
+import dev.halone.shell.MenuItem
+import dev.halone.shell.PageMenuHost
+import dev.halone.shell.SearchEngines
 import dev.halone.shell.BridgeHost
 import dev.halone.shell.BrowserBand
 import dev.halone.shell.BrowserControl
@@ -58,7 +64,7 @@ class DesktopShell(
     private val verticalFovDegrees: Float,
     private val frame: () -> Long,
     private val onRecenter: () -> Unit,
-    version: String,
+    private val version: String,
     deviceName: String,
     private val log: (String) -> Unit,
 ) : ShellPlatform<DesktopPanel>, AutoCloseable {
@@ -68,6 +74,7 @@ class DesktopShell(
     private val sockets = BridgeSockets(::post, log)
     private val byProducer = HashMap<Int, DesktopPanel>()
     private val browsers = HashMap<String, DesktopBrowser>()
+    private val sizesBeforeFullScreen = HashMap<String, Pair<Int, Int>>()
     private val browserOf = HashMap<Int, DesktopBrowser>()
     private val browsing = BrowserData(
         BrowserHistory(FileStore("history.json", io)),
@@ -156,6 +163,11 @@ class DesktopShell(
         host.onCursorChanged = { index, shape -> byProducer[index]?.cursorShape = shape }
         host.onPageChanged = { index, page -> browserOf[index]?.page(index, page) }
         host.onPopup = { index, url, background -> browserOf[index]?.popup(index, url, background) }
+        host.onContextMenu = { index, target -> browserOf[index]?.contextMenu(index, target) }
+        host.onPrompt = { index, prompt -> browserOf[index]?.prompt(index, prompt) }
+        host.onFullScreen = { index, full -> browserOf[index]?.fullScreen(index, full) }
+        host.onScroll = { index, y -> browserOf[index]?.scrolled(index, y) }
+        host.onDownload = ::downloadChanged
         shell.addListener(object : ShellListener {
             override fun onBrowserCommand(windowId: String, command: String) {
                 if (command == FOCUS_ADDRESS) browsers[windowId]?.panel?.keysToLayer = true
@@ -171,6 +183,7 @@ class DesktopShell(
     /** Runs what other threads posted, and polls the shell a few times a second, as ShellSession does. */
     fun tick(nowNs: Long) {
         while (true) (queue.poll() ?: break).run()
+        browsers.values.forEach { it.tick() }
         if (lastNetworkNs == 0L || nowNs - lastNetworkNs >= NETWORK_NS) {
             lastNetworkNs = nowNs
             background.execute { DesktopSystem.network()?.let { state -> post { showNetwork(state) } } }
@@ -262,7 +275,9 @@ class DesktopShell(
         val script = sockets.register(windowId, Shell.ORIGIN) { channel -> bridge.connect(windowId, channel) }
         val chromeIndex = host.open(WEB_WIDTH_PX, chromeApp.heightPx, Shell.ORIGIN + chromeApp.entry, Shell.ORIGIN, script)
         val browser = DesktopBrowser(
-            host, panel, chromeApp.heightPx, browsing.history, frame,
+            host, panel, chromeApp.heightPx, browsing.history, menuHost(windowId),
+            autoHideToolbar = { shell.settings.boolean(ShellSettings.BROWSER_AUTO_HIDE_TOOLBAR) },
+            frame = frame,
             claim = { index ->
                 byProducer[index] = panel
                 browserOf[index] = browsers.getValue(windowId)
@@ -273,8 +288,10 @@ class DesktopShell(
             },
         )
         browsers[windowId] = browser
+        browser.onFullScreenChange = { full -> fitFullScreen(windowId, full) }
         browser.start(chromeIndex, url, private)
         panel.onResizeContent = browser::resized
+        panel.onContentInput = browser::contentInput
         panel.sizeLimits = SizeLimits.defaultFor(WEB_WIDTH_PX, height)
         scene.open(panel)
         log("  shell: opened a web window as $windowId")
@@ -282,6 +299,127 @@ class DesktopShell(
     }
 
     override fun browser(windowId: String): BrowserControl? = browsers[windowId]
+
+    /** What a web window's page menu does in the shell, as ShellSession's browserHost does on Android. */
+    private fun menuHost(windowId: String) = object : PageMenuHost {
+        override fun showMenu(items: List<MenuItem>, xPx: Float, yPx: Float, onChosen: (String?) -> Unit): Int? =
+            runCatching { shell.showMenu(windowId, items, xPx, yPx, onChosen).menuId }.getOrNull()
+
+        override fun openWindow(url: String, private: Boolean) {
+            runCatching { shell.openUrl(url, private) }.onFailure { log("  browser: could not open $url: $it") }
+        }
+
+        override fun openInBrowser(url: String, private: Boolean) {
+            runCatching { shell.openInBrowser(url, private) }.onFailure { log("  browser: could not open $url: $it") }
+        }
+
+        override fun clipboardText() = this@DesktopShell.clipboardText()
+
+        override fun setClipboardText(text: String) = shell.writeClipboardText(text)
+
+        override fun download(url: String, referrer: String?, private: Boolean) {
+            browsers[windowId]?.download(url)
+        }
+
+        override fun searchUrl(text: String) = SearchEngines.url(shell.settings.string(ShellSettings.BROWSER_SEARCH_ENGINE), text)
+
+        override fun isBookmarked(url: String) = browsing.bookmarks.find(url) != null
+
+        override fun toggleBookmark() {
+            val browser = browsers[windowId] ?: return
+            val tab = browser.state().active ?: return
+            browsing.bookmarks.find(tab.url)?.let { browsing.bookmarks.remove(it.id) }
+                ?: runCatching { browsing.bookmarks.add(tab.url, tab.title, browser.iconUrl()) }
+        }
+    }
+
+    /** The window takes the screen's size while its page is full screen, and gets its own back after, as on Android. */
+    private fun fitFullScreen(windowId: String, full: Boolean) {
+        val window = runCatching { shell.find(windowId) }.getOrNull() ?: return
+        if (full) {
+            sizesBeforeFullScreen.getOrPut(windowId) { window.panel.widthPx to window.panel.heightPx }
+            shell.resize(windowId, WEB_WIDTH_PX, WEB_HEIGHT_PX)
+        } else {
+            val (width, height) = sizesBeforeFullScreen.remove(windowId) ?: return
+            shell.resize(windowId, width, height)
+        }
+    }
+
+    private class Saving(val shellId: Int, val windowId: String?, val name: String, val packageFile: File?)
+
+    /** The pages' downloads, as Android's Downloader keeps them: in the Downloads folder, in the shared list, with notices. */
+    private val saving = HashMap<Int, Saving>()
+
+    private fun downloadChanged(index: Int, download: DownloadEvent) {
+        val windowId = browserOf[index]?.panel?.id
+        when (download.state) {
+            ProducerHost.DOWNLOAD_STARTED -> {
+                val name = DownloadNames.sanitise(download.name)
+                val isPackage = download.mime.substringBefore(';').trim().lowercase() == HalonePackage.MIME_TYPE ||
+                    name.lowercase().endsWith("." + HalonePackage.EXTENSION)
+                val target = if (isPackage) {
+                    File(AppData.dir, "cache/packages").apply { mkdirs() }.let { File(it, "download-${System.currentTimeMillis()}.${HalonePackage.EXTENSION}") }
+                } else {
+                    freeFile(downloadsFolder(), name)
+                }
+                val id = browsing.downloads.start(download.url, target.name.takeIf { !isPackage } ?: name,
+                    download.mime.substringBefore(';').ifBlank { null }?.takeIf { it != "application/octet-stream" },
+                    download.total.takeIf { it > 0 }) { host.downloadControl(download.id, cancel = true) }
+                saving[download.id] = Saving(id, windowId, if (isPackage) name else target.name, target.takeIf { isPackage })
+                host.downloadControl(download.id, cancel = false, path = target.path)
+                if (!isPackage) notice("Downloading ${target.name}")
+            }
+            ProducerHost.DOWNLOAD_PROGRESS -> saving[download.id]?.let { browsing.downloads.progress(it.shellId, download.received) }
+            ProducerHost.DOWNLOAD_DONE -> {
+                val save = saving.remove(download.id) ?: return
+                if (save.packageFile != null) {
+                    browsing.downloads.remove(save.shellId)
+                    offerPackage(save)
+                    return
+                }
+                browsing.downloads.finish(save.shellId, download.path, File(download.path).name)
+                notice("Downloaded ${File(download.path).name}")
+            }
+            ProducerHost.DOWNLOAD_FAILED, ProducerHost.DOWNLOAD_CANCELLED -> {
+                val save = saving.remove(download.id) ?: return
+                save.packageFile?.delete()
+                runCatching {
+                    if (download.state == ProducerHost.DOWNLOAD_FAILED) browsing.downloads.fail(save.shellId, "the download failed")
+                    else browsing.downloads.cancel(save.shellId)
+                }
+                if (download.state == ProducerHost.DOWNLOAD_FAILED) notice("Download failed: ${save.name}")
+            }
+        }
+    }
+
+    /** A `.halone` the page downloaded, offered for install over its window as on Android. */
+    private fun offerPackage(save: Saving) {
+        val file = save.packageFile ?: return
+        background.execute {
+            val read = runCatching { HalonePackage.read(file, shell.reservedIds, version) }
+            post {
+                read.onSuccess { pkg ->
+                    val window = save.windowId
+                    if (window == null) file.delete() else shell.offerPackage(window, pkg, "download") { file.delete() }
+                }.onFailure {
+                    file.delete()
+                    notice("Not a Halone app: ${it.message}")
+                }
+            }
+        }
+    }
+
+    private fun downloadsFolder() = File(DesktopFolders.roots().first { it.kind == "downloads" }.path).apply { mkdirs() }
+
+    /** [name] in [folder], numbered as a browser numbers a name already taken: `name (1).ext`. */
+    private fun freeFile(folder: File, name: String): File {
+        var file = File(folder, name)
+        val stem = name.substringBeforeLast('.', name)
+        val extension = name.substringAfterLast('.', "").let { if (it.isEmpty()) "" else ".$it" }
+        var n = 1
+        while (file.exists()) file = File(folder, "$stem (${n++})$extension")
+        return file
+    }
 
     override fun openOverlays(dock: AppInfo, dockUrl: String, launcher: AppInfo, launcherUrl: String) {
         val dockPanel = producerPanel(dock.id, dock.widthPx, dock.heightPx, dockUrl, Shell.ORIGIN)
@@ -325,6 +463,7 @@ class DesktopShell(
 
     override fun applySettings(settings: ShellSettings, changedKey: String?) {
         settings.applyTo(scene)
+        if (changedKey == ShellSettings.BROWSER_AUTO_HIDE_TOOLBAR) browsers.values.forEach { it.settingsChanged() }
         if (changedKey == ShellSettings.PANEL_DISTANCE_METRES) {
             val metres = distance()
             (scene.panels + listOfNotNull(scene.dock, scene.launcher)).forEach { panel ->

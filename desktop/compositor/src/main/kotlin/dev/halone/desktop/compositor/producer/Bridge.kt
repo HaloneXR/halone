@@ -8,6 +8,7 @@ import com.sun.jna.ptr.IntByReference
 @Structure.FieldOrder(
     "kind", "panel", "index", "count", "width", "height", "reply", "pad",
     "seq", "begunNs", "paintedNs", "readyNs", "arrivedNs", "surfaces", "name", "flags", "title", "text",
+    "number", "state", "received", "total", "x", "y", "extra", "path", "mime",
 )
 class BridgeEvent : Structure() {
     @JvmField var kind = 0
@@ -28,6 +29,15 @@ class BridgeEvent : Structure() {
     @JvmField var flags = 0
     @JvmField var title = ByteArray(TITLE_BYTES)
     @JvmField var text = ByteArray(URL_BYTES)
+    @JvmField var number = 0
+    @JvmField var state = 0
+    @JvmField var received = 0L
+    @JvmField var total = 0L
+    @JvmField var x = 0f
+    @JvmField var y = 0f
+    @JvmField var extra = ByteArray(BridgeEvent.URL_BYTES)
+    @JvmField var path = ByteArray(BridgeEvent.PATH_BYTES)
+    @JvmField var mime = ByteArray(BridgeEvent.MIME_BYTES)
 
     companion object {
         const val NONE = 0
@@ -38,6 +48,8 @@ class BridgeEvent : Structure() {
         const val POPUP = 5
         const val TITLE_BYTES = 512
         const val URL_BYTES = 2048
+        const val PATH_BYTES = 1024
+        const val MIME_BYTES = 128
         const val MAX_SURFACES = 8
         const val CURSOR_NAME_BYTES = 32
     }
@@ -55,6 +67,8 @@ interface Bridge : Library {
     fun halone_send_resize(producer: Int, panel: Int, width: Int, height: Int): Int
     fun halone_send_open(producer: Int, panel: Int, width: Int, height: Int, flags: Int, url: String, origin: String, script: String, root: String): Int
     fun halone_send_command(producer: Int, panel: Int, kind: Int, text: String): Int
+    fun halone_send_download_control(producer: Int, download: Int, cancel: Int, path: String): Int
+    fun halone_send_prompt_answer(producer: Int, panel: Int, prompt: Int, allow: Int, remember: Int): Int
     fun halone_send_close(producer: Int, panel: Int): Int
     fun halone_surface_use(surface: Long, delta: Int)
     fun halone_surface_release(surface: Long)

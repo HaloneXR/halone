@@ -54,6 +54,9 @@ class DesktopPanel(
     /** A page drawn in a band across the top over the content, as a web window's browser chrome; null for none. */
     var layer: PanelLayer? = null
 
+    /** The wearer moved the content themselves: the wheel, or with [pressed] a button going down or up on it. */
+    var onContentInput: ((pressed: Boolean?) -> Unit)? = null
+
     /** Whether keys go to [layer], as when its field was last pressed, rather than to the content. */
     var keysToLayer = false
 

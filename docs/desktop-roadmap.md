@@ -292,8 +292,15 @@ settings and shortcuts. The simulator's dev server is a reference for several.
     the half last pressed or to the address field on `focus-address`, and
     history and bookmarks are the shared `BrowserData`. Checked on macOS
     through the shell: open, navigate, back, a second tab and its tab row.
-    Not yet: auto-hiding the toolbar on scroll, permission prompts, page
-    full screen, the page's context menu, downloads.
+  - The rest of Android's web window, sharing what it can: the page's
+    context menu (`PageMenu`, moved into `core-shell`; the producer hands
+    over Chromium's request with what is under it), downloads into the
+    Downloads folder through the shared `Downloads`, with a `.halone`
+    offered for install, permission prompts in the band (location, the
+    microphone, clipboard, storage access, local network, popups the
+    wearer did not ask for), page full screen, and the toolbar hiding on
+    scroll (`ToolbarAutoHide`, moved out of `BrowserEngine`). Overlay
+    scrollbars. Checked on macOS by driving the shell.
   - Left: media.
 
 ### 6. Plugin contract

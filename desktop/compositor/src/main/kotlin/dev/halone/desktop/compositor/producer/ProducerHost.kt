@@ -5,6 +5,35 @@ import dev.halone.desktop.compositor.vk.VulkanContext
 import java.io.File
 import java.util.concurrent.ConcurrentLinkedQueue
 
+/** What the wearer asked for a context menu on, in the page's pixels; [media] is image, video or audio, or null. */
+data class ContextTarget(
+    val x: Float,
+    val y: Float,
+    val link: String?,
+    val source: String?,
+    val media: String?,
+    val selection: String,
+    val editable: Boolean,
+    val canCut: Boolean,
+    val canCopy: Boolean,
+    val canPaste: Boolean,
+)
+
+/** A download of a page's, as the producer reports it; [state] is one of the DOWNLOAD_ constants. */
+data class DownloadEvent(
+    val id: Int,
+    val state: Int,
+    val received: Long,
+    val total: Long,
+    val url: String,
+    val name: String,
+    val mime: String,
+    val path: String,
+)
+
+/** A permission a page asks for, by the protocol's PermissionKind; [gone] when it no longer waits for an answer. */
+data class PromptEvent(val id: Int, val kind: String, val host: String, val rememberable: Boolean, val gone: Boolean)
+
 /** Where a panel's page is, as the producer last said. */
 data class PageState(val title: String, val url: String, val loading: Boolean, val canGoBack: Boolean, val canGoForward: Boolean)
 
@@ -69,6 +98,14 @@ class ProducerHost(
     /** Called on the render thread when a panel's page asks for [url] in a new window or tab. */
     var onPopup: ((index: Int, url: String, background: Boolean) -> Unit)? = null
 
+    var onContextMenu: ((index: Int, target: ContextTarget) -> Unit)? = null
+    var onDownload: ((index: Int, download: DownloadEvent) -> Unit)? = null
+    var onPrompt: ((index: Int, prompt: PromptEvent) -> Unit)? = null
+    var onFullScreen: ((index: Int, fullScreen: Boolean) -> Unit)? = null
+
+    /** A page's vertical scroll offset, in its pixels. */
+    var onScroll: ((index: Int, y: Float) -> Unit)? = null
+
     /** Called on the render thread just before a replaced texture is closed. */
     var onTextureClosed: ((ProducerTexture) -> Unit)? = null
 
@@ -119,6 +156,17 @@ class ProducerHost(
                     loading = e.flags and PAGE_LOADING != 0, canGoBack = e.flags and PAGE_CAN_GO_BACK != 0,
                     canGoForward = e.flags and PAGE_CAN_GO_FORWARD != 0))
                 ProducerEvent.POPUP -> if (e.panel !in closed) onPopup?.invoke(e.panel, e.text, e.flags != 0)
+                ProducerEvent.CONTEXT -> if (e.panel !in closed) onContextMenu?.invoke(e.panel, ContextTarget(
+                    e.x, e.y, e.text.ifEmpty { null }, e.extra.ifEmpty { null },
+                    when (e.number) { MEDIA_IMAGE -> "image"; MEDIA_VIDEO -> "video"; MEDIA_AUDIO -> "audio"; else -> null },
+                    e.title, editable = e.flags and CONTEXT_EDITABLE != 0, canCut = e.flags and CONTEXT_CAN_CUT != 0,
+                    canCopy = e.flags and CONTEXT_CAN_COPY != 0, canPaste = e.flags and CONTEXT_CAN_PASTE != 0,
+                ))
+                ProducerEvent.DOWNLOAD -> onDownload?.invoke(e.panel, DownloadEvent(e.number, e.state, e.received, e.total, e.text, e.title, e.mime, e.path))
+                ProducerEvent.PROMPT -> if (e.panel !in closed) onPrompt?.invoke(e.panel,
+                    PromptEvent(e.number, e.cursor, e.title, rememberable = e.flags and PROMPT_REMEMBERABLE != 0, gone = e.flags and PROMPT_GONE != 0))
+                ProducerEvent.FULLSCREEN -> if (e.panel !in closed) onFullScreen?.invoke(e.panel, e.flags != 0)
+                ProducerEvent.SCROLL -> if (e.panel !in closed) onScroll?.invoke(e.panel, e.y)
                 ProducerEvent.FRAME -> {
                     if (e.panel in closed) {
                         transport.skipped(e.panel, e.index, e.generation)
@@ -184,6 +232,17 @@ class ProducerHost(
         closed += panel
     }
 
+    /** Says where download [download] goes, or with [cancel] that it stops. */
+    fun downloadControl(download: Int, cancel: Boolean, path: String = "") {
+        val send = { transport.downloadControl(download, cancel, path) }
+        if (transport.connected && waiting.isEmpty()) send() else waiting += send
+    }
+
+    fun answerPrompt(panel: Int, prompt: Int, allow: Boolean, remember: Boolean) {
+        val send = { transport.answerPrompt(panel, prompt, allow, remember) }
+        if (transport.connected && waiting.isEmpty()) send() else waiting += send
+    }
+
     fun command(panel: Int, kind: Int, text: String = "") {
         val send = { transport.command(panel, kind, text) }
         if (transport.connected && waiting.isEmpty()) send() else waiting += send
@@ -246,6 +305,28 @@ class ProducerHost(
         const val COMMAND_FORWARD = 3
         const val COMMAND_RELOAD = 4
         const val COMMAND_STOP = 5
+        const val COMMAND_CUT = 6
+        const val COMMAND_COPY = 7
+        const val COMMAND_PASTE = 8
+        const val COMMAND_SELECT_ALL = 9
+        const val COMMAND_DOWNLOAD = 10
+        const val COMMAND_SCROLL_BY = 11
+
+        const val DOWNLOAD_STARTED = 1
+        const val DOWNLOAD_PROGRESS = 2
+        const val DOWNLOAD_DONE = 3
+        const val DOWNLOAD_FAILED = 4
+        const val DOWNLOAD_CANCELLED = 5
+
+        private const val CONTEXT_EDITABLE = 1
+        private const val CONTEXT_CAN_CUT = 2
+        private const val CONTEXT_CAN_COPY = 4
+        private const val CONTEXT_CAN_PASTE = 8
+        private const val MEDIA_IMAGE = 1
+        private const val MEDIA_VIDEO = 2
+        private const val MEDIA_AUDIO = 3
+        private const val PROMPT_REMEMBERABLE = 1
+        private const val PROMPT_GONE = 2
 
         private const val OPEN_PRIVATE = 1
         private const val PAGE_LOADING = 1

@@ -31,6 +31,15 @@ class ProducerEvent(
     val flags: Int = 0,
     val title: String = "",
     val text: String = "",
+    val number: Int = 0,
+    val state: Int = 0,
+    val received: Long = 0,
+    val total: Long = 0,
+    val x: Float = 0f,
+    val y: Float = 0f,
+    val extra: String = "",
+    val path: String = "",
+    val mime: String = "",
 ) {
     companion object {
         const val HELLO = 1
@@ -38,6 +47,11 @@ class ProducerEvent(
         const val CURSOR = 3
         const val PAGE = 4
         const val POPUP = 5
+        const val CONTEXT = 6
+        const val DOWNLOAD = 7
+        const val PROMPT = 8
+        const val FULLSCREEN = 9
+        const val SCROLL = 10
     }
 }
 
@@ -71,6 +85,11 @@ interface ProducerTransport : AutoCloseable {
 
     /** Asks [panel]'s page to navigate, go back or forward, reload or stop. */
     fun command(panel: Int, kind: Int, text: String)
+
+    /** Where download [download] goes, or that it stops. */
+    fun downloadControl(download: Int, cancel: Boolean, path: String)
+
+    fun answerPrompt(panel: Int, prompt: Int, allow: Boolean, remember: Boolean)
 
     fun closePanel(panel: Int)
 

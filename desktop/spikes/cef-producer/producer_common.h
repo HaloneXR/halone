@@ -255,13 +255,93 @@ inline uint32_t pageFlags(bool loading, bool canGoBack, bool canGoForward) {
 }
 
 inline void runCommand(CefRefPtr<CefBrowser> browser, uint32_t kind, const std::string &text) {
+    CefRefPtr<CefFrame> focused = browser->GetFocusedFrame() ? browser->GetFocusedFrame() : browser->GetMainFrame();
     switch (kind) {
         case SPIKE_COMMAND_NAVIGATE: browser->GetMainFrame()->LoadURL(text); break;
         case SPIKE_COMMAND_BACK: browser->GoBack(); break;
         case SPIKE_COMMAND_FORWARD: browser->GoForward(); break;
         case SPIKE_COMMAND_RELOAD: browser->Reload(); break;
         case SPIKE_COMMAND_STOP: browser->StopLoad(); break;
+        case SPIKE_COMMAND_CUT: focused->Cut(); break;
+        case SPIKE_COMMAND_COPY: focused->Copy(); break;
+        case SPIKE_COMMAND_PASTE: focused->Paste(); break;
+        case SPIKE_COMMAND_SELECT_ALL: focused->SelectAll(); break;
+        case SPIKE_COMMAND_DOWNLOAD: browser->GetHost()->StartDownload(text); break;
+        case SPIKE_COMMAND_SCROLL_BY: {
+            char script[64];
+            snprintf(script, sizeof script, "window.scrollBy(0, %d)", atoi(text.c_str()));
+            browser->GetMainFrame()->ExecuteJavaScript(script, browser->GetMainFrame()->GetURL(), 0);
+            break;
+        }
     }
+}
+
+// What a context menu is on, as CONTEXT carries it.
+struct Context {
+    uint32_t flags = 0;
+    uint32_t media = SPIKE_MEDIA_NONE;
+    std::string link;
+    std::string source;
+    std::string selection;
+};
+
+inline Context contextOf(CefRefPtr<CefContextMenuParams> params) {
+    Context context;
+    int edit = params->GetEditStateFlags();
+    if (params->IsEditable()) context.flags |= SPIKE_CONTEXT_EDITABLE;
+    if (edit & CM_EDITFLAG_CAN_CUT) context.flags |= SPIKE_CONTEXT_CAN_CUT;
+    if (edit & CM_EDITFLAG_CAN_COPY) context.flags |= SPIKE_CONTEXT_CAN_COPY;
+    if (edit & CM_EDITFLAG_CAN_PASTE) context.flags |= SPIKE_CONTEXT_CAN_PASTE;
+    switch (params->GetMediaType()) {
+        case CM_MEDIATYPE_IMAGE: context.media = SPIKE_MEDIA_IMAGE; break;
+        case CM_MEDIATYPE_VIDEO: context.media = SPIKE_MEDIA_VIDEO; break;
+        case CM_MEDIATYPE_AUDIO: context.media = SPIKE_MEDIA_AUDIO; break;
+        default: break;
+    }
+    context.link = params->GetLinkUrl().ToString();
+    if (context.media != SPIKE_MEDIA_NONE) context.source = params->GetSourceUrl().ToString();
+    context.selection = params->GetSelectionText().ToString();
+    return context;
+}
+
+inline uint32_t downloadState(CefRefPtr<CefDownloadItem> item) {
+    if (item->IsComplete()) return SPIKE_DOWNLOAD_DONE;
+    if (item->IsCanceled()) return SPIKE_DOWNLOAD_CANCELLED;
+    if (item->IsInterrupted()) return SPIKE_DOWNLOAD_FAILED;
+    return SPIKE_DOWNLOAD_PROGRESS;
+}
+
+// The protocol's PermissionKind for what a page asks, as Android asks the wearer for it; empty for what it denies
+// without asking, such as notifications.
+inline const char *permissionKind(uint32_t requested) {
+    switch (requested) {
+        case CEF_PERMISSION_TYPE_GEOLOCATION: return "geolocation";
+        case CEF_PERMISSION_TYPE_CLIPBOARD: return "clipboard";
+        case CEF_PERMISSION_TYPE_STORAGE_ACCESS:
+        case CEF_PERMISSION_TYPE_TOP_LEVEL_STORAGE_ACCESS: return "storage-access";
+        case CEF_PERMISSION_TYPE_LOCAL_NETWORK:
+        case CEF_PERMISSION_TYPE_LOOPBACK_NETWORK: return "local-network";
+        case CEF_PERMISSION_TYPE_PROTECTED_MEDIA_IDENTIFIER: return "drm";
+        default: return "";
+    }
+}
+
+// Where an answer the wearer asked to keep is kept for the site, as Gecko keeps it on Android; none for the kinds
+// Android never remembers.
+inline bool rememberedAs(const std::string &kind, cef_content_setting_types_t &type) {
+    if (kind == "geolocation") type = CEF_CONTENT_SETTING_TYPE_GEOLOCATION;
+    else if (kind == "storage-access") type = CEF_CONTENT_SETTING_TYPE_STORAGE_ACCESS;
+    else if (kind == "local-network") type = CEF_CONTENT_SETTING_TYPE_LOCAL_NETWORK;
+    else if (kind == "drm") type = CEF_CONTENT_SETTING_TYPE_PROTECTED_MEDIA_IDENTIFIER;
+    else return false;
+    return true;
+}
+
+inline std::string hostOf(const std::string &origin) {
+    CefURLParts parts;
+    if (!CefParseURL(origin, parts)) return origin;
+    std::string host = CefString(&parts.host).ToString();
+    return host.empty() ? origin : host;
 }
 
 // A private panel's profile: in memory, its own, gone with it. Null for the shared one.

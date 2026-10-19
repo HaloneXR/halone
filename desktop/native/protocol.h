@@ -20,7 +20,39 @@ enum {
     SPIKE_MSG_PAGE = 10,
     SPIKE_MSG_COMMAND = 11,
     SPIKE_MSG_POPUP = 12,
+    SPIKE_MSG_CONTEXT = 13,
+    SPIKE_MSG_DOWNLOAD = 14,
+    SPIKE_MSG_PROMPT = 15,
+    SPIKE_MSG_FULLSCREEN = 16,
+    SPIKE_MSG_SCROLL = 17,
+    SPIKE_MSG_DOWNLOAD_CONTROL = 18,
+    SPIKE_MSG_PROMPT_ANSWER = 19,
 };
+
+/* CONTEXT's flags and media kinds. */
+#define SPIKE_CONTEXT_EDITABLE 1u
+#define SPIKE_CONTEXT_CAN_CUT 2u
+#define SPIKE_CONTEXT_CAN_COPY 4u
+#define SPIKE_CONTEXT_CAN_PASTE 8u
+enum {
+    SPIKE_MEDIA_NONE = 0,
+    SPIKE_MEDIA_IMAGE = 1,
+    SPIKE_MEDIA_VIDEO = 2,
+    SPIKE_MEDIA_AUDIO = 3,
+};
+
+/* A DOWNLOAD's state. */
+enum {
+    SPIKE_DOWNLOAD_STARTED = 1,
+    SPIKE_DOWNLOAD_PROGRESS = 2,
+    SPIKE_DOWNLOAD_DONE = 3,
+    SPIKE_DOWNLOAD_FAILED = 4,
+    SPIKE_DOWNLOAD_CANCELLED = 5,
+};
+
+/* PROMPT's flags. */
+#define SPIKE_PROMPT_REMEMBERABLE 1u
+#define SPIKE_PROMPT_GONE 2u
 
 /* OPEN's flags: a private panel keeps nothing, in a profile of its own in memory. */
 #define SPIKE_OPEN_PRIVATE 1u
@@ -37,6 +69,14 @@ enum {
     SPIKE_COMMAND_FORWARD = 3,
     SPIKE_COMMAND_RELOAD = 4,
     SPIKE_COMMAND_STOP = 5,
+    SPIKE_COMMAND_CUT = 6,
+    SPIKE_COMMAND_COPY = 7,
+    SPIKE_COMMAND_PASTE = 8,
+    SPIKE_COMMAND_SELECT_ALL = 9,
+    /* Downloads the URL in the text, as a link the page asked for would be. */
+    SPIKE_COMMAND_DOWNLOAD = 10,
+    /* Scrolls the page by the pixels in the text, up for negative. */
+    SPIKE_COMMAND_SCROLL_BY = 11,
 };
 
 #define SPIKE_CURSOR_NAME_BYTES 32
@@ -48,6 +88,8 @@ enum {
 #define SPIKE_SCRIPT_BYTES 4096
 #define SPIKE_PATH_BYTES 1024
 #define SPIKE_TITLE_BYTES 512
+#define SPIKE_KIND_BYTES 32
+#define SPIKE_MIME_BYTES 128
 
 enum {
     SPIKE_INPUT_MOVE = 1,
@@ -168,6 +210,76 @@ typedef struct {
     char url[SPIKE_URL_BYTES];
 } spike_popup;
 
+/* The wearer asked for the page's context menu at ([x], [y]), on what it describes; the producer showed none. */
+typedef struct {
+    mach_msg_header_t header;
+    uint32_t panel;
+    uint32_t flags;
+    uint32_t media;
+    float x;
+    float y;
+    char link[SPIKE_URL_BYTES];
+    char source[SPIKE_URL_BYTES];
+    char selection[SPIKE_TITLE_BYTES];
+} spike_context;
+
+/*
+ * A download of a panel's page: STARTED waits for a DOWNLOAD_CONTROL saying
+ * where it goes; the rest report it, [path] once it is known.
+ */
+typedef struct {
+    mach_msg_header_t header;
+    uint32_t panel;
+    uint32_t download;
+    uint32_t state;
+    uint32_t pad;
+    int64_t received;
+    int64_t total;
+    char url[SPIKE_URL_BYTES];
+    char name[SPIKE_TITLE_BYTES];
+    char mime[SPIKE_MIME_BYTES];
+    char path[SPIKE_PATH_BYTES];
+} spike_download;
+
+/* Where download [download] goes, or with [cancel] that it stops; an empty path asks for nothing more. */
+typedef struct {
+    mach_msg_header_t header;
+    uint32_t download;
+    uint32_t cancel;
+    char path[SPIKE_PATH_BYTES];
+} spike_download_control;
+
+/* A permission the page asks for, the protocol's PermissionKind in [kind]; with PROMPT_GONE, one it no longer waits on. */
+typedef struct {
+    mach_msg_header_t header;
+    uint32_t panel;
+    uint32_t prompt;
+    uint32_t flags;
+    char kind[SPIKE_KIND_BYTES];
+    char host[SPIKE_ORIGIN_BYTES];
+} spike_prompt;
+
+typedef struct {
+    mach_msg_header_t header;
+    uint32_t panel;
+    uint32_t prompt;
+    uint32_t allow;
+    uint32_t remember;
+} spike_prompt_answer;
+
+typedef struct {
+    mach_msg_header_t header;
+    uint32_t panel;
+    uint32_t fullscreen;
+} spike_fullscreen;
+
+/* The page's vertical scroll offset, in its pixels. */
+typedef struct {
+    mach_msg_header_t header;
+    uint32_t panel;
+    float y;
+} spike_scroll;
+
 typedef union {
     mach_msg_header_t header;
     struct {
@@ -190,6 +302,26 @@ typedef union {
         spike_popup msg;
         mach_msg_trailer_t trailer;
     } popup;
+    struct {
+        spike_context msg;
+        mach_msg_trailer_t trailer;
+    } context;
+    struct {
+        spike_download msg;
+        mach_msg_trailer_t trailer;
+    } download;
+    struct {
+        spike_prompt msg;
+        mach_msg_trailer_t trailer;
+    } prompt;
+    struct {
+        spike_fullscreen msg;
+        mach_msg_trailer_t trailer;
+    } fullscreen;
+    struct {
+        spike_scroll msg;
+        mach_msg_trailer_t trailer;
+    } scroll;
 } spike_consumer_inbox;
 
 typedef union {
@@ -218,6 +350,14 @@ typedef union {
         spike_command msg;
         mach_msg_trailer_t trailer;
     } command;
+    struct {
+        spike_download_control msg;
+        mach_msg_trailer_t trailer;
+    } downloadControl;
+    struct {
+        spike_prompt_answer msg;
+        mach_msg_trailer_t trailer;
+    } promptAnswer;
 } spike_producer_inbox;
 
 #else
@@ -347,5 +487,75 @@ typedef struct {
     uint32_t background;
     char url[SPIKE_URL_BYTES];
 } spike_popup;
+
+/* The wearer asked for the page's context menu at ([x], [y]), on what it describes; the producer showed none. */
+typedef struct {
+    uint32_t id;
+    uint32_t panel;
+    uint32_t flags;
+    uint32_t media;
+    float x;
+    float y;
+    char link[SPIKE_URL_BYTES];
+    char source[SPIKE_URL_BYTES];
+    char selection[SPIKE_TITLE_BYTES];
+} spike_context;
+
+/*
+ * A download of a panel's page: STARTED waits for a DOWNLOAD_CONTROL saying
+ * where it goes; the rest report it, [path] once it is known.
+ */
+typedef struct {
+    uint32_t id;
+    uint32_t panel;
+    uint32_t download;
+    uint32_t state;
+    uint32_t pad;
+    int64_t received;
+    int64_t total;
+    char url[SPIKE_URL_BYTES];
+    char name[SPIKE_TITLE_BYTES];
+    char mime[SPIKE_MIME_BYTES];
+    char path[SPIKE_PATH_BYTES];
+} spike_download;
+
+/* Where download [download] goes, or with [cancel] that it stops; an empty path asks for nothing more. */
+typedef struct {
+    uint32_t id;
+    uint32_t download;
+    uint32_t cancel;
+    char path[SPIKE_PATH_BYTES];
+} spike_download_control;
+
+/* A permission the page asks for, the protocol's PermissionKind in [kind]; with PROMPT_GONE, one it no longer waits on. */
+typedef struct {
+    uint32_t id;
+    uint32_t panel;
+    uint32_t prompt;
+    uint32_t flags;
+    char kind[SPIKE_KIND_BYTES];
+    char host[SPIKE_ORIGIN_BYTES];
+} spike_prompt;
+
+typedef struct {
+    uint32_t id;
+    uint32_t panel;
+    uint32_t prompt;
+    uint32_t allow;
+    uint32_t remember;
+} spike_prompt_answer;
+
+typedef struct {
+    uint32_t id;
+    uint32_t panel;
+    uint32_t fullscreen;
+} spike_fullscreen;
+
+/* The page's vertical scroll offset, in its pixels. */
+typedef struct {
+    uint32_t id;
+    uint32_t panel;
+    float y;
+} spike_scroll;
 
 #endif
