@@ -671,9 +671,7 @@ public:
     CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
 
     void OnBeforeCommandLineProcessing(const CefString &, CefRefPtr<CefCommandLine> commandLine) override {
-        commandLine->AppendSwitchWithValue("autoplay-policy", "no-user-gesture-required");
-        commandLine->AppendSwitchWithValue("remote-debugging-port", "9230");
-        commandLine->AppendSwitchWithValue("remote-allow-origins", "*");
+        producer::commonSwitches(commandLine);
         // Keeps Chromium off the desktop's keyring.
         commandLine->AppendSwitchWithValue("password-store", "basic");
     }

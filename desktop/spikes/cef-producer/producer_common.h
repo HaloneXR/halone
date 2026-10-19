@@ -229,6 +229,15 @@ inline void injectBridge(CefRefPtr<CefFrame> frame, const std::string &origin, c
     frame->ExecuteJavaScript(script, url, 0);
 }
 
+// What both producers ask of Chromium: media that plays without a gesture, DevTools on 9230 for tests, and
+// overlay scrollbars, drawn over the page only while it scrolls, as on the glasses' phone.
+inline void commonSwitches(CefRefPtr<CefCommandLine> commandLine) {
+    commandLine->AppendSwitchWithValue("autoplay-policy", "no-user-gesture-required");
+    commandLine->AppendSwitchWithValue("remote-debugging-port", "9230");
+    commandLine->AppendSwitchWithValue("remote-allow-origins", "*");
+    commandLine->AppendSwitchWithValue("enable-features", "OverlayScrollbar");
+}
+
 inline std::string text(const char *field, size_t size) { return std::string(field, strnlen(field, size)); }
 
 // Where a panel's page is, as last told to the compositor, so only changes are sent.

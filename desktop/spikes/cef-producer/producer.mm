@@ -370,9 +370,7 @@ public:
     CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
 
     void OnBeforeCommandLineProcessing(const CefString &, CefRefPtr<CefCommandLine> commandLine) override {
-        commandLine->AppendSwitchWithValue("autoplay-policy", "no-user-gesture-required");
-        commandLine->AppendSwitchWithValue("remote-debugging-port", "9230");
-        commandLine->AppendSwitchWithValue("remote-allow-origins", "*");
+        producer::commonSwitches(commandLine);
         // Every rebuild changes the binary's signature, and the real keychain asks again each time.
         commandLine->AppendSwitch("use-mock-keychain");
     }
