@@ -46,9 +46,17 @@ class GlassesStereoSession(
     var autoPaceOnLatch = true
         private set
 
+    /** Glasses pacing as this session would choose it: for a rate the phone's screen is out of step with. */
+    var autoPaceToGlasses = false
+        private set
+
     /** The glasses' display the compositor was last shown on. */
     var display: Display? = null
         private set
+
+    /** Told on any thread when the frame turns 2D or 3D, or the display changes rate. */
+    @Volatile
+    var onDisplayChanged: (() -> Unit)? = null
 
     suspend fun enterStereo(device: GlassesDevice, mode: DisplayMode? = null): Display? =
         displays.enterStereo(device, mode)
@@ -77,11 +85,16 @@ class GlassesStereoSession(
             // frame and halves the scanout span.
             it.refreshHz = display.refreshRate
             watchRate(display, it)
+            meterFrames(it)
+            it.onStereoChanged = { onDisplayChanged?.invoke() }
             // Latch pacing waits on frame timestamps that arrive a beat late;
             // tuned at XREAL's 60 Hz it fits, but at 120 Hz without a display
             // clock (RayNeo GT series, measured) it halved the frame rate.
             autoPaceOnLatch = !(displayClock == null && presentation.refreshHz > 90f)
             it.paceOnLatch = autoPaceOnLatch
+            autoPaceToGlasses = displayClock != null && !PhoneScreen.inStep(display.mode.refreshRate, PhoneScreen.rates(context))
+            it.paceToGlasses = autoPaceToGlasses
+            log("  pacing: ${if (autoPaceToGlasses) "the glasses' clock, out of step with the phone's screen" else if (autoPaceOnLatch) "each frame's latch" else "free"}")
         }
     }
 
@@ -147,6 +160,38 @@ class GlassesStereoSession(
         log("  closed panel '${panel.id}'")
     }
 
+    /** Frames the compositor drew over the last second, or null before a second has passed. */
+    @Volatile
+    var renderFps: Double? = null
+        private set
+
+    private val meterHandler = Handler(Looper.getMainLooper())
+    private var meter: Runnable? = null
+
+    private fun meterFrames(compositor: StereoCompositor) {
+        stopMeter()
+        var frames = compositor.framesDrawn
+        var at = android.os.SystemClock.elapsedRealtime()
+        val tick = object : Runnable {
+            override fun run() {
+                val now = android.os.SystemClock.elapsedRealtime()
+                val drawn = compositor.framesDrawn
+                if (now > at) renderFps = (drawn - frames) * 1000.0 / (now - at)
+                frames = drawn
+                at = now
+                meterHandler.postDelayed(this, METER_INTERVAL_MS)
+            }
+        }
+        meter = tick
+        meterHandler.postDelayed(tick, METER_INTERVAL_MS)
+    }
+
+    private fun stopMeter() {
+        meter?.let { meterHandler.removeCallbacks(it) }
+        meter = null
+        renderFps = null
+    }
+
     private var rateListener: DisplayManager.DisplayListener? = null
 
     /** Follows the display if the system does switch its rate later. */
@@ -160,6 +205,7 @@ class GlassesStereoSession(
                 if (kotlin.math.abs(hz - compositor.refreshHz) > 1f) {
                     compositor.refreshHz = hz
                     log("  display ${displayId} now at ${"%.0f".format(hz)} Hz")
+                    onDisplayChanged?.invoke()
                 }
             }
             override fun onDisplayAdded(displayId: Int) = Unit
@@ -176,6 +222,7 @@ class GlassesStereoSession(
 
     fun dismiss() {
         unwatchRate()
+        stopMeter()
         // The presentation goes first: it stops the render thread, so nothing is
         // mid-draw against a texture we are about to release.
         presentation.dismiss()
@@ -193,6 +240,7 @@ class GlassesStereoSession(
     companion object {
         /** Leaves headroom at the edges, where these optics are least comfortable. */
         const val PANEL_VERTICAL_FILL = 0.75f
+        private const val METER_INTERVAL_MS = 1_000L
         private const val DEFAULT_PANEL_DISTANCE_M = 4f
     }
 }

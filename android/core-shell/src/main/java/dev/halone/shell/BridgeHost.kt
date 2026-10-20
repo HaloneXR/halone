@@ -116,6 +116,8 @@ class BridgeHost(
 
     override fun onBatteryChanged(battery: Battery) = broadcast("system.batteryChanged", battery.toJson())
 
+    override fun onDisplayChanged() = broadcast("display.changed", shell.displayState().toJson())
+
     private fun Battery.toJson() = JSONObject().put("level", level).put("charging", charging)
 
     override fun onBrowserChanged(windowId: String, state: BrowserState) {
@@ -203,6 +205,8 @@ class BridgeHost(
             .put("receivedAt", System.nanoTime() / 1e6)
         "system.battery" -> shell.battery?.toJson() ?: throw HaloneException("unavailable", "battery level is not known")
         "system.shareLog" -> shell.shareLog().let { null }
+        "display.state" -> shell.displayState().toJson()
+        "display.restart" -> shell.restartDisplay().let { null }
         "screen.capture" -> shell.captureScreen(params.optLong("delayMs", 0)).let { null }
         "screen.recording" -> shell.recording.toJson()
         "screen.startRecording" -> shell.startRecording(params.optLong("delayMs", 0)).let { null }
@@ -496,7 +500,7 @@ class BridgeHost(
 
         /** What every app may do: learn about the system, run its own window, menus over it, write the clipboard, open a page. */
         internal val OPEN_TO_ALL = setOf(
-            "system.info", "system.ping", "system.battery",
+            "system.info", "system.ping", "system.battery", "display.state",
             "windows.self", "windows.setTitle", "windows.resize", "windows.setSizeLimits", "windows.setStereoRegion",
             "windows.setAutoHide", "windows.openedFile", "windows.route", "windows.openUrl",
             "menu.show", "clipboard.writeText", "browser.open", "scene.recenter",
@@ -539,7 +543,7 @@ class BridgeHost(
         /** Events about the app's own window, or the system, that any app hears. */
         internal val OWN_EVENTS = setOf(
             "window.focusChanged", "window.fileOpened", "window.routed", "media.changed", "system.batteryChanged",
-            "socket.data", "socket.closed",
+            "display.changed", "socket.data", "socket.closed",
         )
     }
 }

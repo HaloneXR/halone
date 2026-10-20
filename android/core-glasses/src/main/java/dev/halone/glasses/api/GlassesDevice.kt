@@ -1,6 +1,7 @@
 package dev.halone.glasses.api
 
 import java.io.Closeable
+import kotlin.math.roundToInt
 
 /**
  * A connected pair of glasses.
@@ -147,6 +148,26 @@ fun DisplayControl.preferredStereoMode(): DisplayMode? =
 /** The best mono mode, for the monoscopic fallback and for exiting stereo. */
 fun DisplayControl.preferredMonoMode(): DisplayMode? =
     supportedModes.filter { !it.isStereo }.maxWithOrNull(MODE_PREFERENCE)
+
+/** A refresh rate the glasses offer, and whether any 3D mode runs at it. */
+data class RefreshRate(val hz: Int, val stereo: Boolean)
+
+fun DisplayControl.refreshRates(): List<RefreshRate> =
+    supportedModes.groupBy { it.refreshHz.roundToInt() }
+        .map { (hz, modes) -> RefreshRate(hz, modes.any { it.isStereo }) }
+        .sortedBy { it.hz }
+
+/**
+ * The mode for the wearer's choice of rate and 3D. A rate the glasses only
+ * offer in 2D gives a 2D mode whatever [stereo] says; a rate they do not offer
+ * at all gives their preferred mode.
+ */
+fun DisplayControl.modeFor(refreshHz: Int, stereo: Boolean): DisplayMode? {
+    val (threeD, twoD) = supportedModes.filter { it.refreshHz.roundToInt() == refreshHz }.partition { it.isStereo }
+    val best = if (stereo) threeD.maxWithOrNull(MODE_PREFERENCE) ?: twoD.maxWithOrNull(MODE_PREFERENCE)
+    else twoD.maxWithOrNull(MODE_PREFERENCE) ?: threeD.maxWithOrNull(MODE_PREFERENCE)
+    return best ?: if (stereo) preferredStereoMode() else preferredMonoMode() ?: preferredStereoMode()
+}
 
 private val MODE_PREFERENCE: Comparator<DisplayMode> = compareBy(
     { if (it.verified) 1 else 0 },

@@ -112,6 +112,8 @@ class ShellSettings(private val store: SettingsStore, schemaJson: String) {
         private const val MAX_ITEM_LENGTH = 512
         const val PANEL_DISTANCE_METRES = "panel.distanceMetres"
         const val DISPLAY_BRIGHTNESS = "display.brightness"
+        const val DISPLAY_REFRESH_RATE = "display.refreshRate"
+        const val DISPLAY_STEREO = "display.stereo"
         const val MEDIA_SCREEN_WIDTH_DEGREES = "media.screenWidthDegrees"
         const val MEDIA_SPHERE_ZOOM = "media.sphereZoom"
         const val MEDIA_SPHERE_DISTANCE_METRES = "media.sphereDistanceMetres"

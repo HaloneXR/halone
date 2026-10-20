@@ -1,5 +1,5 @@
 import { onBeforeUnmount, reactive, ref, type Ref } from 'vue'
-import { useHalone, type AppInfo, type RecordingState, type Settings, type WindowInfo, type HaloneClient } from '@halone/sdk'
+import { useHalone, type AppInfo, type DisplayState, type RecordingState, type Settings, type WindowInfo, type HaloneClient } from '@halone/sdk'
 import { installTextMenu } from './menu'
 
 export type HostStatus = 'connecting' | 'ready' | 'no-host'
@@ -25,7 +25,12 @@ export function useHost() {
   return { halone, status, error }
 }
 
-function subscribe<T>(halone: HaloneClient, load: () => Promise<T>, event: 'windows.changed' | 'settings.changed', target: Ref<T>) {
+function subscribe<T>(
+  halone: HaloneClient,
+  load: () => Promise<T>,
+  event: 'windows.changed' | 'settings.changed' | 'display.changed',
+  target: Ref<T>,
+) {
   load().then((value) => (target.value = value), () => {})
   const off = halone.on(event, (value) => (target.value = value as T))
   onBeforeUnmount(off)
@@ -42,6 +47,20 @@ export function useSettings(halone: HaloneClient) {
   subscribe(halone, () => halone.settings.get(), 'settings.changed', settings)
   return settings
 }
+
+/** The glasses' mode, with the frame rate actually drawn kept fresh while the environment runs. */
+export function useDisplay(halone: HaloneClient) {
+  const display = ref<DisplayState | null>(null)
+  const load = () => halone.display.state()
+  subscribe(halone, load, 'display.changed', display)
+  const timer = setInterval(() => {
+    if (display.value?.running) load().then((value) => (display.value = value), () => {})
+  }, DISPLAY_POLL_MS)
+  onBeforeUnmount(() => clearInterval(timer))
+  return display
+}
+
+const DISPLAY_POLL_MS = 2000
 
 export function useFocus(halone: HaloneClient) {
   const state = reactive({ focused: false })

@@ -26,6 +26,7 @@ import dev.halone.glasses.api.BrightnessControl
 import dev.halone.app.CrashReports
 import dev.halone.shell.AppInfo
 import dev.halone.shell.Battery
+import dev.halone.shell.DisplayState
 import dev.halone.shell.BrowserControl
 import dev.halone.shell.BridgeHost
 import dev.halone.shell.Shell
@@ -87,6 +88,8 @@ class ShellSession(
     private val requestProjection: ((android.media.projection.MediaProjection?) -> Unit) -> Unit,
     /** Asks the wearer, on the phone, for Android permissions; told which were granted. */
     private val requestPermissions: (Array<String>, (Set<String>) -> Unit) -> Unit,
+    private val display: () -> DisplayState,
+    private val restartDisplay: () -> Unit,
     private val log: (String) -> Unit,
 ) : ShellPlatform {
     private val handler = Handler(Looper.getMainLooper())
@@ -583,6 +586,10 @@ class ShellSession(
         if (!CrashReports.shareLog(context)) throw HaloneException("unavailable", "crash reports are off")
     }
 
+    override fun displayState() = display()
+
+    override fun restartDisplay() = restartDisplay.invoke()
+
     override fun notice(text: String) = notices.show(text, forMs = DOWNLOAD_NOTICE_MS)
 
     /** An app's icon, scaled down and kept as a `data:` URL so the launcher shows it offline. */
@@ -787,6 +794,7 @@ class ShellSession(
         val spacing = settings.number(ShellSettings.SLOT_SPACING_DEGREES).toFloat()
         if (spacing != scene.slotSpacingDegrees) scene.layOutCylindrical(spacing, immediate = false)
 
+        if (changedKey == ShellSettings.DISPLAY_REFRESH_RATE || changedKey == ShellSettings.DISPLAY_STEREO) shell.displayChanged()
         if (changedKey == ShellSettings.DISPLAY_BRIGHTNESS) {
             val control = brightness
             val level = settings.number(ShellSettings.DISPLAY_BRIGHTNESS)

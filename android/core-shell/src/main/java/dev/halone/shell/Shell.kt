@@ -6,6 +6,7 @@ import dev.halone.compositor.Scene
 import dev.halone.compositor.TitleBar
 import dev.halone.compositor.SizeLimits
 import dev.halone.compositor.StereoRegion
+import org.json.JSONArray
 import org.json.JSONObject
 
 /** What the shell needs from whatever hosts it: engines, the head, and the hardware. */
@@ -45,6 +46,10 @@ interface ShellPlatform {
 
     /** Offers Halone's log to the phone's share sheet, while crash reports are on. */
     fun shareLog(): Unit = throw HaloneException("unavailable", "this host keeps no log")
+
+    fun displayState(): DisplayState = DisplayState()
+
+    fun restartDisplay(): Unit = throw HaloneException("unavailable", "the environment is not running")
 
     /** A short message on the glasses, gone by itself. */
     fun notice(text: String) {}
@@ -104,6 +109,7 @@ interface ShellListener {
     fun onFocusChanged(previous: String?, current: String?) {}
     fun onLauncherChanged(open: Boolean) {}
     fun onBatteryChanged(battery: Battery) {}
+    fun onDisplayChanged() {}
     fun onBrowserChanged(windowId: String, state: BrowserState) {}
     fun onFileOpened(windowId: String, path: String) {}
     fun onRecordingChanged(state: RecordingState) {}
@@ -129,6 +135,25 @@ data class RecordingState(val recording: Boolean = false, val startedAt: Long? =
 }
 
 data class Battery(val level: Double, val charging: Boolean)
+
+data class DisplayRate(val hz: Int, val stereo: Boolean, val matchesPhone: Boolean = true)
+
+data class DisplayState(
+    val running: Boolean = false,
+    val stereo: Boolean = false,
+    val refreshHz: Double? = null,
+    val renderFps: Double? = null,
+    val rates: List<DisplayRate> = emptyList(),
+    val restartNeeded: Boolean = false,
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("running", running)
+        .put("stereo", stereo)
+        .put("refreshHz", refreshHz ?: JSONObject.NULL)
+        .put("renderFps", renderFps ?: JSONObject.NULL)
+        .put("rates", JSONArray(rates.map { JSONObject().put("hz", it.hz).put("stereo", it.stereo).put("matchesPhone", it.matchesPhone) }))
+        .put("restartNeeded", restartNeeded)
+}
 
 enum class WindowKind(val wire: String) { APP("app"), WEB("web"), NATIVE("native") }
 
@@ -615,6 +640,13 @@ class Shell(
     fun openKeyCaptureSettings() = platform.openKeyCaptureSettings()
 
     fun shareLog() = platform.shareLog()
+
+    fun displayState() = platform.displayState()
+
+    fun restartDisplay() = platform.restartDisplay()
+
+    /** The glasses started, stopped or changed mode; listeners read [displayState] again. */
+    fun displayChanged() = listeners.forEach { it.onDisplayChanged() }
 
     fun clearBrowsingData(cookies: Boolean, cache: Boolean) {
         if (cookies || cache) platform.clearBrowsingData(cookies, cache)

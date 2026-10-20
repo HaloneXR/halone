@@ -538,7 +538,15 @@ class StereoCompositor(
      * no depth, but no squashed pair of half-images in each eye either, and
      * these modes often run faster than the side-by-side one.
      */
+    @Volatile
     private var mono = false
+
+    /** Whether the frame is two eyes side by side, known once the surface is. */
+    val stereo: Boolean? get() = if (frameWidth == 0) null else !mono
+
+    /** Told on the render thread whenever the surface's shape sets [stereo]. */
+    @Volatile
+    var onStereoChanged: ((Boolean) -> Unit)? = null
 
     /** Width of what one rendered eye covers: half the frame, or all of it in [mono]. */
     private val eyeWidth: Int get() = if (mono) frameWidth else frameWidth / 2
@@ -618,6 +626,7 @@ class StereoCompositor(
         mono = width < 2 * height
         projectionDirty = true
         rebuildProjection()
+        onStereoChanged?.invoke(!mono)
         log(
             if (mono) "  compositor: frame ${width}x$height, mono (one image for both eyes)"
             else "  compositor: frame ${width}x$height, per-eye ${width / 2}x$height"
@@ -630,6 +639,7 @@ class StereoCompositor(
         // The clear is what dequeues a buffer, and that is where the loop really
         // blocks. Waiting before it only moves the block, so wait after it.
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT or GLES20.GL_DEPTH_BUFFER_BIT)
+        waitForGlassesRefresh()
         waitForDrawPhase()
         val drawNs = System.nanoTime()
 
@@ -799,6 +809,28 @@ class StereoCompositor(
             LockSupport.parkNanos(LATCH_POLL_NS)
         }
         lastWaitedNs = System.nanoTime() - startNs
+    }
+
+    /**
+     * One frame per glasses refresh, each started on a refresh boundary by the
+     * glasses' own clock. For a rate the phone's screen cannot keep in step
+     * with: Android hands frames over on the phone screen's beat, so drawing
+     * on that beat gives the glasses frames unevenly, while drawing on theirs
+     * gives each refresh at most one.
+     */
+    @Volatile
+    var paceToGlasses = false
+
+    private var pacedRefreshNs = 0L
+
+    private fun waitForGlassesRefresh() {
+        if (!paceToGlasses) return
+        val clock = displayClock?.takeIf { it.ready && it.beaconAgeNs < MAX_BEACON_AGE_NS } ?: return
+        val now = clock.deviceNow()
+        val next = clock.refreshAfter(maxOf(now, pacedRefreshNs + (clock.periodNs / 2).toLong()))
+        pacedRefreshNs = next
+        val waitNs = next - now
+        if (waitNs > 0 && waitNs < 2 * clock.periodNs) LockSupport.parkNanos(waitNs)
     }
 
     private fun waitForDrawPhase() {

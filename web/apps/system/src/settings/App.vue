@@ -8,20 +8,35 @@ import SystemPanel from '../shared/SystemPanel.vue'
 import KeyboardPanel from './KeyboardPanel.vue'
 import PluginsPanel from './PluginsPanel.vue'
 import AboutPanel from './AboutPanel.vue'
-import { onPhone, onRoute, useHost, useSettings } from '../shared/host'
+import { onPhone, onRoute, useDisplay, useHost, useSettings } from '../shared/host'
 
 
 type Rule = { type: 'boolean' } | { type: 'number'; min: number; max: number } | { type: 'enum'; values: string[] }
 
 type Item =
-  | { kind: 'toggle'; key: SettingKey; label: string; help: string }
+  | { kind: 'toggle'; key: SettingKey; label: string; help: string; unavailable?: () => string | null }
+  | { kind: 'rate'; key: 'display.refreshRate'; label: string; help: string }
   | { kind: 'slider'; key: SettingKey; label: string; help: string; step: number; format: (v: number) => string }
   | { kind: 'choice'; key: SettingKey; label: string; help: string; labels: Record<string, string>; style: 'segmented' | 'dropdown' }
-  | { kind: 'action'; key: string; label: string; help: string; button: string; run: () => Promise<unknown>; enabledBy?: SettingKey }
+  | {
+      kind: 'action'
+      key: string
+      label: string
+      help: string
+      button: string
+      run: () => Promise<unknown>
+      enabledBy?: SettingKey
+      /** Left out while this is false. */
+      shown?: () => boolean
+    }
 
 interface Group {
   title?: string
   note?: string
+  /** Shown above the card while it returns something. */
+  warning?: () => string | null
+  /** Left out while this is false. */
+  shown?: () => boolean
   items: Item[]
 }
 
@@ -38,6 +53,8 @@ interface Section {
 
 const { halone, status, error } = useHost()
 const settings = useSettings(halone)
+const display = useDisplay(halone)
+const chosenRate = computed(() => display.value?.rates.find((rate) => rate.hz === settings.value?.['display.refreshRate']) ?? null)
 const schema = ref<Record<string, Rule>>({})
 const message = ref<string | null>(null)
 const query = ref('')
@@ -78,6 +95,9 @@ fetch('/settings-schema.json')
   .catch(() => (message.value = 'Could not load the settings schema'))
 
 const NARROW_PX = 720
+/** Frames a second below the refresh rate before the settings say so; the meter wobbles by one or two. */
+const FRAME_RATE_SLACK = 5
+const REFRESH_RATE_FAQ = 'https://halone.app/faq#refresh-rate'
 const degrees = (v: number) => `${v}°`
 
 const GLASSES_ACTIONS = {
@@ -279,6 +299,41 @@ const allSections: Section[] = [
     title: 'Display',
     icon: 'brightness_6',
     groups: [
+      {
+        title: 'Refresh rate and 3D',
+        shown: () => (display.value?.rates.length ?? 0) > 0,
+        warning: () => {
+          const state = display.value
+          if (!state?.running || state.refreshHz === null || state.renderFps === null) return null
+          if (state.renderFps >= state.refreshHz - FRAME_RATE_SLACK) return null
+          return `Halone is drawing about ${Math.round(state.renderFps)} frames a second, fewer than the glasses' ${Math.round(state.refreshHz)} Hz. Some phones limit how fast apps can draw to a second screen.`
+        },
+        items: [
+          {
+            kind: 'rate',
+            key: 'display.refreshRate',
+            label: 'Refresh rate',
+            help: 'How often the glasses redraw. Higher is smoother, if this phone keeps up.',
+          },
+          {
+            kind: 'toggle',
+            key: 'display.stereo',
+            label: 'Enable 3D',
+            help: 'One image per eye, so windows and videos have depth. Off shows both eyes the same picture.',
+            unavailable: () => (chosenRate.value?.stereo === false ? `The glasses only show 2D at ${chosenRate.value.hz} Hz.` : null),
+          },
+          {
+            kind: 'action',
+            key: 'display.restart',
+            label: 'Restart to apply',
+            help: 'The environment starts again in the new mode. Open windows close.',
+            button: 'Restart',
+            run: () => halone.display.restart(),
+            shown: () => display.value?.restartNeeded === true,
+          },
+        ],
+        note: 'Changes apply the next time the environment starts.',
+      },
       {
         items: [
           { kind: 'slider', key: 'display.brightness', label: 'Brightness', help: 'Glasses display brightness.', step: 0.05, format: (v) => `${Math.round(v * 100)}%` },
@@ -492,9 +547,9 @@ const allSections: Section[] = [
             kind: 'choice',
             key: 'tracking.framePacing',
             label: 'Frame pacing',
-            help: 'Waiting for each frame to reach the display cuts lag on some glasses and halves the frame rate on others.',
-            labels: { auto: 'Auto', wait: 'Wait for each frame', free: 'Don’t wait' },
-            style: 'segmented',
+            help: 'Waiting for each frame to reach the display cuts lag on some glasses and halves the frame rate on others. Matching the glasses draws one frame per glasses refresh, by their own clock.',
+            labels: { auto: 'Auto', wait: 'Wait for each frame', free: 'Don’t wait', glasses: 'Match the glasses' },
+            style: 'dropdown',
           },
         ],
         note: 'Changes apply straight away, so you can tune them while wearing the glasses.',
@@ -566,6 +621,23 @@ function options(item: Extract<Item, { kind: 'choice' }>) {
   return values.map((value) => ({ value, label: item.labels[value] ?? value }))
 }
 
+function rateOptions() {
+  return (display.value?.rates ?? []).map((rate) => ({
+    value: String(rate.hz),
+    label: `${rate.hz} Hz (${[rate.stereo ? 'supports 3D' : '2D only', ...(rate.matchesPhone ? [] : ['may stutter'])].join(', ')})`,
+  }))
+}
+
+function learnMore() {
+  halone.browser.open(REFRESH_RATE_FAQ).catch(() => (message.value = `See ${REFRESH_RATE_FAQ}`))
+}
+
+function shown(groups: Group[]) {
+  return groups
+    .filter((group) => !group.shown || group.shown())
+    .map((group) => ({ ...group, items: group.items.filter((item) => item.kind !== 'action' || !item.shown || item.shown()) }))
+}
+
 function range(key: SettingKey) {
   const r = rule(key)
   return r?.type === 'number' ? r : { min: 0, max: 1 }
@@ -585,12 +657,12 @@ const needle = computed(() => query.value.trim().toLowerCase())
 const visible = computed<{ section: Section; groups: Group[] }[]>(() => {
   if (!needle.value) {
     const section = sections.find((s) => s.id === active.value) ?? sections[0]!
-    return [{ section, groups: section.groups }]
+    return [{ section, groups: shown(section.groups) }]
   }
   return sections
     .map((section) => ({
       section,
-      groups: section.groups
+      groups: shown(section.groups)
         .map((group) => ({
           ...group,
           items: group.items.filter((item) =>
@@ -641,18 +713,38 @@ const visible = computed<{ section: Section; groups: Group[] }[]>(() => {
         <AboutPanel v-else-if="entry.section.panel === 'about'" />
         <template v-for="(group, index) in entry.groups" :key="index">
           <h3 v-if="group.title" class="x-section-title">{{ group.title }}</h3>
+          <p v-if="group.warning?.()" class="warning">
+            {{ group.warning() }} <a href="#" @click.prevent="learnMore">Learn more</a>
+          </p>
           <div class="x-card group">
             <div v-for="item in group.items" :key="item.key" class="item" :class="item.kind">
               <template v-if="item.kind === 'toggle'">
                 <span class="text">
                   <span class="label">{{ item.label }}</span>
-                  <span class="help x-muted">{{ item.help }}</span>
+                  <span class="help x-muted">{{ item.unavailable?.() ?? item.help }}</span>
                 </span>
                 <input
                   type="checkbox"
                   class="switch"
-                  :checked="settings[item.key] as boolean"
+                  :disabled="!!item.unavailable?.()"
+                  :checked="!item.unavailable?.() && (settings[item.key] as boolean)"
                   @change="set(item.key, ($event.target as HTMLInputElement).checked as never)"
+                />
+              </template>
+
+              <template v-else-if="item.kind === 'rate'">
+                <span class="text">
+                  <span class="label">{{ item.label }}</span>
+                  <span class="help x-muted">{{ item.help }}</span>
+                  <span v-if="chosenRate?.matchesPhone === false" class="help warning">
+                    This phone's screen can't refresh in step with {{ chosenRate.hz }} Hz, so motion may stutter.
+                    <a href="#" @click.prevent="learnMore">Learn more</a>
+                  </span>
+                </span>
+                <Dropdown
+                  :model-value="String(settings[item.key])"
+                  :options="rateOptions()"
+                  @update:model-value="set(item.key, Number($event))"
                 />
               </template>
 
@@ -903,6 +995,19 @@ h3.x-section-title:first-child {
   font-size: var(--font-size-small);
 }
 
+.warning {
+  color: var(--danger);
+  font-size: var(--font-size-small);
+}
+
+p.warning {
+  margin: 0 4px 12px;
+}
+
+.warning a {
+  color: inherit;
+}
+
 .group {
   padding: 4px 24px;
 }
@@ -921,7 +1026,8 @@ h3.x-section-title:first-child {
 
 .item.toggle,
 .item.action,
-.item.choice {
+.item.choice,
+.item.rate {
   flex-direction: row;
   align-items: center;
   justify-content: space-between;

@@ -137,3 +137,18 @@ describe('auto-hide asked for by a window', () => {
     expect(s.windowsAutoHide).toBe(true)
   })
 })
+
+describe('display mode', () => {
+  it('follows the refresh rate and 3D settings, and stays 2D where the glasses are', () => {
+    const s = shell()
+    const changes: number[] = []
+    s.on('display', () => changes.push(s.displayState().refreshHz ?? 0))
+    expect(s.displayState()).toMatchObject({ running: true, stereo: true, refreshHz: 60 })
+    s.setSetting('display.refreshRate', 120)
+    expect(s.displayState()).toMatchObject({ stereo: false, refreshHz: 120 })
+    s.setSetting('display.refreshRate', 90)
+    s.setSetting('display.stereo', false)
+    expect(s.displayState()).toMatchObject({ stereo: false, refreshHz: 90 })
+    expect(changes).toEqual([120, 90, 90])
+  })
+})

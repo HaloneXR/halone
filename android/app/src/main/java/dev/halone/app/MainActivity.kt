@@ -33,6 +33,9 @@ import dev.halone.glasses.api.GlassesDevice
 import dev.halone.glasses.api.TrackingSample
 import dev.halone.glasses.api.preferredMonoMode
 import dev.halone.glasses.api.preferredStereoMode
+import dev.halone.glasses.api.modeFor
+import dev.halone.glasses.api.refreshRates
+import dev.halone.glasses.api.DisplayMode
 import dev.halone.glasses.drivers.xreal.IncompleteCalibration
 import dev.halone.glasses.fusion.DisplayClock
 import dev.halone.glasses.fusion.HeadTracker
@@ -40,6 +43,8 @@ import dev.halone.glasses.input.TapDetector
 import dev.halone.glasses.input.TapGestures
 import dev.halone.glasses.input.TapSide
 import dev.halone.glasses.math.Vec3
+import dev.halone.shell.DisplayRate
+import dev.halone.shell.DisplayState
 import dev.halone.shell.KeyChord
 import dev.halone.shell.RecordingState
 import dev.halone.shell.ShellListener
@@ -376,12 +381,71 @@ class MainActivity : AppCompatActivity() {
         connection.close()
         XrSessionService.stop(this)
         refreshHome()
+        displayChanged()
+    }
+
+    /** What the bridge's `display.state` answers, on any thread. */
+    private fun displayState(): DisplayState {
+        val session = stereoSession
+        val compositor = session?.compositor
+        val running = shellSession != null && compositor != null
+        return DisplayState(
+            running = running,
+            stereo = running && compositor?.stereo == true,
+            refreshHz = session?.display?.mode?.refreshRate?.toDouble()?.takeIf { running },
+            renderFps = session?.renderFps?.takeIf { running },
+            rates = connection.device?.display?.refreshRates().orEmpty().let { offered ->
+                val phone = dev.halone.app.stereo.PhoneScreen.rates(this)
+                offered.map { DisplayRate(it.hz, it.stereo, dev.halone.app.stereo.PhoneScreen.inStep(it.hz.toFloat(), phone)) }
+            },
+            restartNeeded = running && connection.device?.let { chosenMode(it) }?.let { it.key != enteredMode?.key } == true,
+        )
+    }
+
+    private fun displayChanged() {
+        shellSession?.shell?.displayChanged()
+        phoneShell?.displayChanged()
+    }
+
+    /** The settings as saved, read afresh when no shell holds them. */
+    private fun savedSettings(): ShellSettings = shellSession?.shell?.settings ?: ShellSettings(
+        dev.halone.app.shell.PreferencesStore(this),
+        assets.open(ShellSettings.SCHEMA_ASSET).bufferedReader().use { it.readText() },
+    )
+
+    /** The mode the wearer's refresh rate and 3D settings ask for, or null for glasses Halone cannot switch. */
+    private fun chosenMode(device: GlassesDevice): DisplayMode? {
+        val control = device.display ?: return null
+        val settings = savedSettings()
+        return control.modeFor(settings.number(ShellSettings.DISPLAY_REFRESH_RATE).roundToInt(), settings.boolean(ShellSettings.DISPLAY_STEREO))
+    }
+
+    /** The mode the running environment was started in. */
+    private var enteredMode: DisplayMode? = null
+
+    /**
+     * Starts the environment again in the mode the refresh rate and 3D
+     * settings ask for. The switch recreates the glasses' display, and the
+     * windows with it.
+     */
+    private fun restartInChosenMode() {
+        val device = connection.device ?: return
+        if (shellSession == null || starting != null) return
+        val wanted = chosenMode(device) ?: return
+        if (wanted.key == enteredMode?.key) return
+        logLine("▶ restarting in $wanted")
+        lifecycleScope.launch {
+            delay(MODE_RESTART_DELAY_MS)
+            if (shellSession == null || starting != null) return@launch
+            leaveStereo(restoreMode = false)
+            toggleEnvironment()
+        }
     }
 
     /** Settings on the phone: the environment's own shell while it runs, one of its own otherwise. */
     private fun openSettings() {
         if (phoneSettings?.shown == true) return
-        val bridge = shellSession?.bridge ?: (phoneShell ?: PhoneShell(this, glassesStatus().second ?: "No glasses", ::logOnMain).also { phoneShell = it }).bridge
+        val bridge = shellSession?.bridge ?: (phoneShell ?: PhoneShell(this, glassesStatus().second ?: "No glasses", ::displayState, ::logOnMain).also { phoneShell = it }).bridge
         phoneSettings = PhoneSettings(this, bridge, onClosed = ::settingsClosed, log = ::logOnMain).also { it.show() }
         settingsBack.isEnabled = true
     }
@@ -463,6 +527,7 @@ class MainActivity : AppCompatActivity() {
         action("timing") { timingStatus() }
         action("present") { presentStatus() }
         action("hitches") { reportHitches() }
+        action("phasesweep") { sweepDrawPhase() }
         action("panels") { reportPanels() }
         action("why") { reportArrangement() }
         action("shellstatus") { reportShell() }
@@ -873,6 +938,7 @@ class MainActivity : AppCompatActivity() {
         startDisplayTiming(device)
         if (stereoSession == null && starting == null && glassesInStereo()) setStereo(false)
         refreshHome()
+        displayChanged()
     }
 
     /**
@@ -1223,6 +1289,25 @@ class MainActivity : AppCompatActivity() {
             t.presented, t.dropped, t.expired)
     }
 
+    /**
+     * How steadily frames reach the glasses at each draw phase, a tenth of a
+     * refresh apart: the spread of draw-to-present is what shows as stutter.
+     */
+    private fun sweepDrawPhase() {
+        val compositor = stereoSession?.compositor ?: run { logLine("  not in stereo"); return }
+        val before = compositor.drawPhase
+        lifecycleScope.launch {
+            for (step in 0 until 10) {
+                compositor.drawPhase = step / 10f
+                delay(PHASE_SETTLE_MS)
+                compositor.presentTiming.reset()
+                delay(PHASE_MEASURE_MS)
+                logLine("  phase %.1f: %s".format(step / 10f, describePresentTiming(compositor)))
+            }
+            compositor.drawPhase = before
+        }
+    }
+
     private fun reportHitches() {
         val compositor = stereoSession?.compositor ?: run { logLine("  not in stereo"); return }
         val hitches = compositor.presentTiming.hitches.toList()
@@ -1399,10 +1484,16 @@ class MainActivity : AppCompatActivity() {
         }
         stereoSession?.let { session ->
             val compositor = session.compositor ?: return@let
-            compositor.paceOnLatch = when (settings?.str(ShellSettings.TRACKING_FRAME_PACING)) {
+            val pacing = settings?.str(ShellSettings.TRACKING_FRAME_PACING)
+            compositor.paceOnLatch = when (pacing) {
                 "wait" -> true
-                "free" -> false
+                "free", "glasses" -> false
                 else -> session.autoPaceOnLatch
+            }
+            compositor.paceToGlasses = when (pacing) {
+                "glasses" -> true
+                "wait", "free" -> false
+                else -> session.autoPaceToGlasses
             }
         }
         pointerPad?.showStats = settings?.bool(ShellSettings.DEVELOPER_DISPLAY_STATS) == true
@@ -1425,17 +1516,10 @@ class MainActivity : AppCompatActivity() {
     private fun startPadStats() {
         padStatsJob?.cancel()
         padStatsJob = lifecycleScope.launch {
-            var lastFrames = -1L
-            var lastAt = 0L
             while (isActive && pointerPad != null) {
-                val compositor = stereoSession?.compositor
                 val display = stereoSession?.display
-                val now = android.os.SystemClock.elapsedRealtime()
-                if (compositor != null && display != null) {
-                    val frames = compositor.framesDrawn
-                    val fps = if (lastFrames >= 0 && now > lastAt) (frames - lastFrames) * 1000f / (now - lastAt) else null
-                    lastFrames = frames
-                    lastAt = now
+                if (stereoSession?.compositor != null && display != null) {
+                    val fps = stereoSession?.renderFps
                     val mode = display.mode
                     val offered = display.supportedModes
                         .filter { it.physicalWidth == mode.physicalWidth && it.physicalHeight == mode.physicalHeight }
@@ -1907,9 +1991,11 @@ class MainActivity : AppCompatActivity() {
         val mode = modeKey?.let { key ->
             device.display?.supportedModes?.firstOrNull { it.key == key }
                 ?: run { logLine("  $key is not a mode this device lists"); return null }
-        }
+        } ?: chosenMode(device)
+        enteredMode = mode
 
         val session = stereoSession ?: GlassesStereoSession(this) { logOnMain(it) }
+        session.onDisplayChanged = { runOnUiThread { displayChanged() } }
         stereoSession = session
 
         return lifecycleScope.launch {
@@ -2150,6 +2236,8 @@ class MainActivity : AppCompatActivity() {
                 pluginKeyboard = phoneKeyboard,
                 requestProjection = ::requestProjection,
                 requestPermissions = ::requestAndroidPermissions,
+                display = ::displayState,
+                restartDisplay = { runOnUiThread { restartInChosenMode() } },
                 log = { logOnMain(it) },
             )
         } catch (missing: java.io.FileNotFoundException) {
@@ -2181,6 +2269,7 @@ class MainActivity : AppCompatActivity() {
         phoneSettings?.hide()
         logLine("  shell started with ${shell.shell.apps.size} apps")
         refreshHome()
+        displayChanged()
     }
 
     /** The panel the phone's keyboard is typing into, while one has a text field focused. */
@@ -2470,7 +2559,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun leaveStereo() {
+    private fun leaveStereo(restoreMode: Boolean = true) {
         val session = stereoSession ?: run { logLine("not in stereo"); return }
         stopBedMode()
         KeyCaptureService.router = null
@@ -2487,10 +2576,12 @@ class MainActivity : AppCompatActivity() {
         hitHistoryJob?.cancel()
         hitHistoryJob = null
         session.dismiss()
-        connection.device?.let { session.leaveStereo(it) }
+        if (restoreMode) connection.device?.let { session.leaveStereo(it) }
         stereoSession = null
+        enteredMode = null
         logLine("stereo session ended")
         refreshHome()
+        displayChanged()
     }
 
     private fun focusedWebEngine(): WebViewEngine? =
@@ -2528,6 +2619,11 @@ class MainActivity : AppCompatActivity() {
         const val CONNECT_TIMEOUT_MS = 60_000L
         const val LINK_RETURN_TIMEOUT_MS = 20_000L
         const val STEREO_TIMEOUT_MS = 20_000L
+
+        /** Long enough for the request that asked for a restart to be answered first. */
+        const val MODE_RESTART_DELAY_MS = 300L
+        const val PHASE_SETTLE_MS = 1_000L
+        const val PHASE_MEASURE_MS = 3_000L
 
         /** How soon after a window closes losing the phone counts as caused by it. */
         const val RECLAIM_AFTER_CLOSE_MS = 3_000L

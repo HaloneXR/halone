@@ -172,6 +172,7 @@ class PackageAppsTest {
         assertEquals("ok", app.code("windows.self"))
         assertEquals("ok", app.code("windows.setTitle", JSONObject().put("title", "Session")))
         assertEquals("ok", app.code("clipboard.read"))
+        assertEquals("ok", app.code("display.state"))
         assertEquals("permission-denied", app.code("windows.list"))
         assertTrue(app.call("windows.list").getJSONObject("error").getString("message").contains("windows permission"))
         assertEquals("permission-denied", app.code("settings.get"))
@@ -180,6 +181,7 @@ class PackageAppsTest {
         assertEquals("permission-denied", app.code("plugins.list"))
         assertEquals("permission-denied", app.code("status.list"))
         assertEquals("permission-denied", app.code("system.shareLog"))
+        assertEquals("permission-denied", app.code("display.restart"))
         assertEquals("permission-denied", app.code("plugins.setEnabled", JSONObject().put("packageName", "dev.example.plugin").put("enabled", true)))
         assertTrue(shell.windows().any { it.id == other.id })
     }

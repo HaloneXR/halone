@@ -10,6 +10,7 @@ import dev.halone.engine.plugin.PluginDirectory
 import dev.halone.app.CrashReports
 import dev.halone.shell.AppInfo
 import dev.halone.shell.BridgeHost
+import dev.halone.shell.DisplayState
 import dev.halone.shell.HaloneException
 import dev.halone.shell.NativeApps
 import dev.halone.shell.Shell
@@ -23,7 +24,12 @@ import java.util.concurrent.Executors
  * same settings and plugins the environment reads, and a bridge for the page,
  * but no scene to open windows in.
  */
-class PhoneShell(private val context: Context, deviceName: String, log: (String) -> Unit) : ShellPlatform {
+class PhoneShell(
+    private val context: Context,
+    deviceName: String,
+    private val display: () -> DisplayState,
+    log: (String) -> Unit,
+) : ShellPlatform {
     private val handler = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
     private val nativeApps = NativeApps(FileStore(context, "plugins.json", io))
@@ -53,6 +59,8 @@ class PhoneShell(private val context: Context, deviceName: String, log: (String)
 
     fun close() = io.shutdown()
 
+    fun displayChanged() = shell.displayChanged()
+
     private fun asset(name: String) = context.assets.open(name).bufferedReader().use { it.readText() }
 
     override fun openApp(windowId: String, app: AppInfo, url: String): Panel? = null
@@ -80,4 +88,6 @@ class PhoneShell(private val context: Context, deviceName: String, log: (String)
     override fun shareLog() {
         if (!CrashReports.shareLog(context)) throw HaloneException("unavailable", "crash reports are off")
     }
+
+    override fun displayState() = display()
 }
