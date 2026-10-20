@@ -67,6 +67,7 @@ class GlassesStereoSession(
         tracker: HeadTracker,
         optics: Optics,
         displayClock: DisplayClock? = null,
+        rateHz: Float? = null,
     ) {
         dismiss()
         this.optics = optics
@@ -77,7 +78,7 @@ class GlassesStereoSession(
             // the compositor renders with.
             it.calibration = tracker.calibration
             it.displayClock = displayClock
-            presentation.show(display, it)
+            presentation.show(display, it, rateHz)
             // The rate the display actually runs at, not the one asked for:
             // **[measured]** a OnePlus 12 accepts the request for 120 Hz on a
             // GT Max all the way down to SurfaceFlinger and still drives the

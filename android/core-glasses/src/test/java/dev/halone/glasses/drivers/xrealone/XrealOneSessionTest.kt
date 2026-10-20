@@ -3,6 +3,9 @@ package dev.halone.glasses.drivers.xrealone
 import dev.halone.glasses.api.DeviceCalibration
 import dev.halone.glasses.api.DeviceEvent
 import dev.halone.glasses.api.GlassesDevice
+import dev.halone.glasses.api.RefreshRate
+import dev.halone.glasses.api.modeFor
+import dev.halone.glasses.api.refreshRates
 import dev.halone.glasses.api.StereoLayout
 import dev.halone.glasses.api.TrackingSample
 import dev.halone.glasses.api.UsbIdentity
@@ -162,7 +165,20 @@ class XrealOneSessionTest {
 
         connect(GatedTransport(), control).use { device ->
             control.open()
-            assertEquals("sbs", device.display!!.currentMode().getOrThrow().key)
+            assertEquals("sbs-60", device.display!!.currentMode().getOrThrow().key)
+        }
+    }
+
+    @Test
+    fun `2D offers every rate the glasses take and 3D only 60`() {
+        connect(GatedTransport(), GatedTransport()).use { device ->
+            val display = device.display!!
+            assertTrue(display.rateChosenByHost)
+            assertEquals(
+                listOf(RefreshRate(60, true), RefreshRate(90, false), RefreshRate(120, false)),
+                display.refreshRates(),
+            )
+            assertEquals("mono-120", display.modeFor(120, stereo = true)?.key)
         }
     }
 

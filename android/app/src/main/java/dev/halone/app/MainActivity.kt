@@ -254,7 +254,9 @@ class MainActivity : AppCompatActivity() {
     private fun describeDisplay(displayId: Int): String {
         val display = getSystemService(android.hardware.display.DisplayManager::class.java).getDisplay(displayId) ?: return "gone"
         val mode = display.mode
-        return "\"${display.name}\" ${mode.physicalWidth}x${mode.physicalHeight}@${"%.0f".format(mode.refreshRate)}"
+        val metrics = android.util.DisplayMetrics().also { @Suppress("DEPRECATION") display.getRealMetrics(it) }
+        return "\"${display.name}\" ${mode.physicalWidth}x${mode.physicalHeight}@${"%.0f".format(mode.refreshRate)}" +
+            " ${metrics.widthPixels}x${metrics.heightPixels} ${metrics.densityDpi}dpi state ${display.state}"
     }
 
     private fun refreshHome() {
@@ -2054,7 +2056,7 @@ class MainActivity : AppCompatActivity() {
                 return@launch
             }
 
-            session.show(display, head, device.optics, displayClock)
+            session.show(display, head, device.optics, displayClock, mode?.refreshHz?.takeIf { device.display?.rateChosenByHost == true })
             // A compositor built while the glasses pin the image must draw head-locked.
             session.compositor?.lockToHead = device.onboardPinning?.enabled == true
             applyTrackingSettings()

@@ -1,6 +1,8 @@
 package dev.halone.glasses.api
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ModeChoiceTest {
@@ -47,5 +49,12 @@ class ModeChoiceTest {
     fun `a rate the glasses lack falls back to their preferred mode`() {
         assertEquals("sbs-60", control.modeFor(72, stereo = true)?.key)
         assertEquals("mirror-60", control.modeFor(72, stereo = false)?.key)
+    }
+
+    @Test
+    fun `only the rate tells two modes of the same signal apart`() {
+        val (mirror60, mirror90) = control.supportedModes.take(2)
+        assertTrue(mirror60.sameSignalAs(mirror90))
+        assertFalse(mirror60.sameSignalAs(control.supportedModes.first { it.key == "half-sbs-60" }))
     }
 }

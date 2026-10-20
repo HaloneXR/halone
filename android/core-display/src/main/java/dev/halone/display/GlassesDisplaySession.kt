@@ -10,6 +10,7 @@ import dev.halone.glasses.api.DisplayMode
 import dev.halone.glasses.api.GlassesDevice
 import dev.halone.glasses.api.preferredMonoMode
 import dev.halone.glasses.api.preferredStereoMode
+import dev.halone.glasses.api.sameSignalAs
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
@@ -42,7 +43,7 @@ class GlassesDisplaySession(
         }
 
         val current = control.currentMode().getOrNull()
-        if (current?.key == stereo.key) {
+        if (current != null && (current.key == stereo.key || control.rateChosenByHost && current.sameSignalAs(stereo))) {
             log("  already in ${current.key}; reusing the current display")
             return findGlassesDisplay(device)
         }

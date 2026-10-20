@@ -143,6 +143,8 @@ internal class XrealOneSession(
 
         override val modeChangeRecreatesDisplay = true
 
+        override val rateChosenByHost = true
+
         override fun currentMode(): Result<DisplayMode> =
             channel.request(XrealOneProtocol.MSG_GET_INPUT_MODE, XrealOneProtocol.getBody())
                 .mapCatching { value ->

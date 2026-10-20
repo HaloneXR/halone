@@ -73,7 +73,19 @@ interface DisplayControl {
      * callers must be ready to rebuild rather than assuming a seamless switch.
      */
     val modeChangeRecreatesDisplay: Boolean
+
+    /**
+     * True when the glasses take whatever refresh rate the host's video
+     * signal has (XREAL One series): modes that differ only in rate are one
+     * mode to the glasses, and the host picks the rate by the display mode it
+     * asks Android for.
+     */
+    val rateChosenByHost: Boolean get() = false
 }
+
+/** The same layout and frame, whatever the refresh rate. */
+fun DisplayMode.sameSignalAs(other: DisplayMode): Boolean =
+    layout == other.layout && frameWidth == other.frameWidth && frameHeight == other.frameHeight
 
 /**
  * The glasses' own world-locking. While [enabled], the glasses move the image

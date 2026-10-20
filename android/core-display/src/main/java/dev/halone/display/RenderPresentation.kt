@@ -33,18 +33,20 @@ class RenderPresentation(
     var refreshHz: Float = 60f
         private set
 
-    fun show(display: Display, renderer: GLSurfaceView.Renderer) {
+    /** [rateHz] is the rate to ask for on a 2D display; null asks for its fastest. */
+    fun show(display: Display, renderer: GLSurfaceView.Renderer, rateHz: Float? = null) {
         dismiss()
 
         val stereo = widestStereoMode(display)
-        val wide = stereo ?: fastestMode(display)
+        val wide = stereo ?: flatMode(display, rateHz)
         refreshHz = wide?.refreshRate ?: display.refreshRate
 
-        // Only for a 2D display left as the glasses have it (RayNeo GT
-        // series): asking for its fastest rate. A side-by-side mode is pinned
-        // by id alone, as before: **[suspected]** an XREAL Air switched to
-        // 3D and then never came up once the rate was forced as well, the
-        // non-seamless switch it asks for resetting the glasses' own mode.
+        // Only for a 2D display: asking for its fastest rate (RayNeo GT
+        // series) or the one the wearer chose (XREAL One series). A
+        // side-by-side mode is pinned by id alone, as before: **[suspected]**
+        // an XREAL Air switched to 3D and then never came up once the rate
+        // was forced as well, the non-seamless switch it asks for resetting
+        // the glasses' own mode.
         val forceRate = stereo == null && wide != null
         val rate = refreshHz
         val view = object : GLSurfaceView(context) {}.apply {
@@ -77,7 +79,13 @@ class RenderPresentation(
         }
         surfaceView = view
 
-        presentation = Presentation(context, display).apply {
+        presentation = KeptPresentation(context, display, log).apply {
+            setOnDismissListener { dismissed ->
+                if (presentation !== dismissed) return@setOnDismissListener
+                presentation = null
+                surfaceView = null
+                log("  presentation on display ${display.displayId} taken down by the system")
+            }
             window?.let { w ->
                 wide?.let { mode ->
                     w.attributes = w.attributes.apply {
@@ -109,24 +117,44 @@ class RenderPresentation(
     }
 
     fun dismiss() {
-        presentation?.dismiss()
+        val shown = presentation
         presentation = null
         surfaceView = null
+        shown?.dismiss()
+    }
+
+    /**
+     * Android cancels a presentation whenever its display's metrics change,
+     * even while the display stays, and the glasses then mirror the phone.
+     * **[suspected]** behind a One Pro on a Galaxy S948U1 falling back to
+     * mirroring, unpredictably and with no display removed. Kept up while the
+     * display is valid; a removed display still takes it down.
+     */
+    private class KeptPresentation(context: Context, display: Display, private val log: (String) -> Unit) :
+        Presentation(context, display) {
+        override fun cancel() {
+            if (display.isValid) {
+                log("  presentation kept through a change to display ${display.displayId}")
+                return
+            }
+            super.cancel()
+        }
     }
 
     private companion object {
         const val REAPPLY_MODE_MS = 500L
 
         /**
-         * No side-by-side mode means the glasses are in 2D: take the fastest
-         * refresh at the current resolution, which on RayNeo GT glasses is
-         * 120 Hz against the 60 the default mode may be.
+         * No side-by-side mode means the glasses are in 2D: take the refresh
+         * nearest [rateHz] at the current resolution, or the fastest, which on
+         * RayNeo GT glasses is 120 Hz against the 60 the default mode may be.
          */
-        fun fastestMode(display: Display): Display.Mode? {
+        fun flatMode(display: Display, rateHz: Float?): Display.Mode? {
             val current = display.mode
-            return display.supportedModes
+            val modes = display.supportedModes
                 .filter { it.physicalWidth == current.physicalWidth && it.physicalHeight == current.physicalHeight }
-                .maxByOrNull { it.refreshRate }
+            return if (rateHz == null) modes.maxByOrNull { it.refreshRate }
+            else modes.minByOrNull { kotlin.math.abs(it.refreshRate - rateHz) }
         }
 
         /** Widest mode shaped like two 16:9 halves glued together. */
