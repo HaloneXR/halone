@@ -171,6 +171,9 @@ export class Bridge {
         if (!shell.state.battery) throw new HaloneError('unavailable', 'battery level is not known')
         return { ...shell.state.battery }
       },
+      'system.shareLog': () => {
+        throw new HaloneError('unavailable', 'the simulator keeps no log')
+      },
       'screen.capture': () => {
         throw new HaloneError('unavailable', 'the simulator cannot capture what the glasses show')
       },
