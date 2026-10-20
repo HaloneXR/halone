@@ -96,6 +96,27 @@ class XrealOneSessionTest {
     }
 
     @Test
+    fun `each magnetometer report rides on the next imu sample`() {
+        val stream = XrealOneCaptures.REPORTS
+        val reports = GatedTransport(stream.toList().chunked(1000).map { it.toByteArray() }, endOfStream = true)
+        val samples = CopyOnWriteArrayList<TrackingSample.Inertial>()
+        val gone = CountDownLatch(1)
+
+        connect(reports, control = null).use { device ->
+            device.addEventListener { if (it is DeviceEvent.Disconnected) gone.countDown() }
+            device.tracking.start { samples += it as TrackingSample.Inertial }
+            reports.open()
+            assertTrue("stream end was not reported", gone.await(5, TimeUnit.SECONDS))
+        }
+
+        val magnets = XrealOneCaptures.messages(stream)
+            .count { (_, body) -> XrealOneReport.type(body, 0) == XrealOneReport.TYPE_MAGNETOMETER }
+        val carried = samples.mapNotNull { it.magnetRaw }
+        assertTrue("${carried.size} of $magnets", carried.size >= magnets - 2)
+        carried.forEach { assertEquals(39.6f, it.length, 1.5f) }
+    }
+
+    @Test
     fun `calibration is read from the config and keeps the mounting angle`() {
         val config = XrealOneCaptures.reply(
             XrealOneProtocol.MSG_GET_CONFIG, 1, XrealOneCaptures.stringReplyBody(XrealOneCaptures.CONFIG_JSON),
