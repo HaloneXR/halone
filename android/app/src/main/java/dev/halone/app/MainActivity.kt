@@ -63,6 +63,8 @@ import dev.halone.app.shell.KeyCaptureService
 import dev.halone.app.shell.PhoneShell
 import dev.halone.app.shell.ShellSession
 import dev.halone.app.stereo.GlassesStereoSession
+import dev.halone.app.testmode.PhoneDisplay
+import dev.halone.app.testmode.PhoneGlasses
 import dev.halone.app.tap.TapRecorder
 import dev.halone.app.tap.TapScript
 import kotlinx.coroutines.Dispatchers
@@ -103,6 +105,7 @@ class MainActivity : AppCompatActivity() {
             onSettings = ::openSettings,
             onShareReport = ::shareCrashReport,
             onDismissReport = ::dismissCrashReport,
+            onTestModeUnlocked = ::unlockTestMode,
         )
         setContentView(home.view)
         registerDevActions()
@@ -185,7 +188,7 @@ class MainActivity : AppCompatActivity() {
     /** Glasses plugged in or pulled out; the system delivers both while the app is running. */
     private val usbReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action == UsbManager.ACTION_USB_DEVICE_DETACHED && connection.device != null && connection.findSupported() == null) {
+            if (intent.action == UsbManager.ACTION_USB_DEVICE_DETACHED && testDisplay == null && connection.device != null && connection.findSupported() == null) {
                 glassesGone()
             }
             refreshHome()
@@ -259,13 +262,53 @@ class MainActivity : AppCompatActivity() {
         val (status, model) = glassesStatus()
         val setup = connection.findSupported()?.second?.match?.setup
         val offerLink = setup != null && connectFailedAt > 0 && status != GlassesStatus.LINK_OFF && tracker == null
+        home.testModeUnlocked = savedSettings().boolean(ShellSettings.TEST_MODE_ENABLED)
+        val offerTestMode = home.testModeUnlocked && (status == GlassesStatus.DISCONNECTED || status == GlassesStatus.NO_VIDEO_OUTPUT)
         home.render(
             status,
             model,
             help = setup?.linkOffHelp,
             notice = homeNotice,
-            action = if (offerLink) "Turn on TCP/IP" to ::turnOnLink else null,
+            action = when {
+                offerLink -> "Turn on TCP/IP" to ::turnOnLink
+                offerTestMode -> "Start Test Mode" to ::startTestMode
+                else -> null
+            },
         )
+    }
+
+    private fun unlockTestMode() {
+        savedSettings().set(ShellSettings.TEST_MODE_ENABLED, true)
+        refreshHome()
+    }
+
+    /** Set while test mode runs the environment on the phone's own screen and sensors. */
+    private var testDisplay: PhoneDisplay? = null
+
+    private fun startTestMode() {
+        if (shellSession != null || starting != null || connection.device != null) return
+        val glasses = PhoneGlasses(this)
+        if (!glasses.tracking.available) {
+            homeNotice = "Test mode needs a gyroscope and an accelerometer, and this phone lacks one."
+            refreshHome()
+            return
+        }
+        logLine("▶ starting test mode")
+        testDisplay = PhoneDisplay(this)
+        XrSessionService.withoutDevice = true
+        connection.standIn(glasses)
+        connected(glasses, null)
+        toggleEnvironment()
+        starting?.invokeOnCompletion { runOnUiThread { if (shellSession == null) endTestMode() } }
+    }
+
+    private fun endTestMode() {
+        val display = testDisplay ?: return
+        testDisplay = null
+        glassesGone()
+        display.close()
+        XrSessionService.withoutDevice = false
+        logLine("test mode ended")
     }
 
     private fun shareCrashReport() {
@@ -456,6 +499,7 @@ class MainActivity : AppCompatActivity() {
         phoneShell?.close()
         phoneShell = null
         home.showCrashReport(CrashReports.pending(this) != null)
+        refreshHome()
     }
 
     private val settingsBack = object : OnBackPressedCallback(false) {
@@ -491,6 +535,10 @@ class MainActivity : AppCompatActivity() {
             val shell = shellSession?.shell ?: return
             shell.setSetting(ShellSettings.FOLLOW_ENABLED, !shell.settings.boolean(ShellSettings.FOLLOW_ENABLED))
         }
+
+        override fun stop() {
+            if (stereoSession != null) leaveStereo()
+        }
     }
 
     /**
@@ -503,6 +551,7 @@ class MainActivity : AppCompatActivity() {
             actions[key] = block
         }
         action("start") { toggleEnvironment() }
+        action("test-mode") { startTestMode() }
         action("stop") { if (stereoSession != null) leaveStereo() }
         action("usb") { dumpUsb() }
         action("connect") { requestPermissionAndConnect() }
@@ -1456,7 +1505,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun showPad() {
         startHitHistory()
-        if (pointerPad == null) pointerPad = PointerPad(this, padGestures, padActions).also { it.show() }
+        if (pointerPad == null) pointerPad = PointerPad(this, padGestures, padActions, testDisplay?.view).also { it.show() }
         applyTrackingSettings()
         startPadStats()
     }
@@ -1999,7 +2048,7 @@ class MainActivity : AppCompatActivity() {
         stereoSession = session
 
         return lifecycleScope.launch {
-            val display = session.enterStereo(device, mode)
+            val display = testDisplay?.display ?: session.enterStereo(device, mode)
             if (display == null) {
                 logLine("  could not enter stereo")
                 return@launch
@@ -2018,7 +2067,7 @@ class MainActivity : AppCompatActivity() {
             // no longer waits out the minute the stillness detector can take to
             // latch — which is the reason the first run of a session used to
             // come up un-recentred.
-            while (!head.hasUsableBias) delay(500)
+            while (!head.hasUsableBias && testDisplay == null) delay(500)
             recentreHead(head)
             logLine("  recentred; bias ${if (head.biasCalibrated) "measured" else "seeded from calibration"}")
         }
@@ -2362,6 +2411,7 @@ class MainActivity : AppCompatActivity() {
     private fun applyPointerMode() {
         val compositor = stereoSession?.compositor ?: return
         val mode = if (pointingDevice != null) "mouse"
+        else if (testDisplay != null) "touchpad"
         else shellSession?.shell?.settings?.let { runCatching { it.string(ShellSettings.INPUT_POINTER) }.getOrNull() } ?: "phone"
         if (compositor.cursorImages !== cursorImages) compositor.cursorImages = cursorImages
         compositor.cursorStyle = when (mode) {
@@ -2576,10 +2626,11 @@ class MainActivity : AppCompatActivity() {
         hitHistoryJob?.cancel()
         hitHistoryJob = null
         session.dismiss()
-        if (restoreMode) connection.device?.let { session.leaveStereo(it) }
+        if (restoreMode && testDisplay == null) connection.device?.let { session.leaveStereo(it) }
         stereoSession = null
         enteredMode = null
         logLine("stereo session ended")
+        endTestMode()
         refreshHome()
         displayChanged()
     }

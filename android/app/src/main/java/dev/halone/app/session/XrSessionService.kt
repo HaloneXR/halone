@@ -50,7 +50,7 @@ class XrSessionService : Service() {
 
         val projecting = intent?.getBooleanExtra(EXTRA_PROJECTION, false) == true
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            val types = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or
+            val types = (if (withoutDevice) 0 else ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE) or
                 (if (projecting) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION else 0)
             startForeground(NOTIFICATION_ID, notification, types)
         } else {
@@ -83,11 +83,20 @@ class XrSessionService : Service() {
             context.startForegroundService(Intent(context, XrSessionService::class.java).putExtra(EXTRA_PROJECTION, true))
         }
 
+        /**
+         * Test mode, with no glasses on USB: Android 14 refuses a
+         * `connectedDevice` service then, so the service runs only while a
+         * recording needs it.
+         */
+        @Volatile
+        var withoutDevice = false
+
         fun endProjection(context: Context) {
-            context.startForegroundService(Intent(context, XrSessionService::class.java))
+            if (withoutDevice) stop(context) else start(context)
         }
 
         fun start(context: Context) {
+            if (withoutDevice) return
             context.startForegroundService(Intent(context, XrSessionService::class.java))
         }
 

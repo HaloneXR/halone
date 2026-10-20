@@ -519,6 +519,17 @@ const allSections: Section[] = [
         ],
       },
       {
+        shown: () => settings.value?.['testMode.enabled'] === true,
+        items: [
+          {
+            kind: 'toggle',
+            key: 'testMode.enabled',
+            label: 'Test mode',
+            help: 'Offers to run the environment on the phone’s own screen, with no glasses. Turning it off hides it again; tapping the glasses on the home screen ten times brings it back.',
+          },
+        ],
+      },
+      {
         title: 'Head tracking',
         items: [
           {

@@ -28,6 +28,7 @@
   "bedMode.forwardDegrees": { "type": "number", "default": 70, "min": 40, "max": 90 },
   "developer.enabled": { "type": "boolean", "default": false },
   "developer.displayStats": { "type": "boolean", "default": false },
+  "testMode.enabled": { "type": "boolean", "default": false },
   "tracking.custom": { "type": "boolean", "default": false },
   "tracking.predictionMs": { "type": "number", "default": 0, "min": 0, "max": 80 },
   "tracking.steadinessDegrees": { "type": "number", "default": 0.2, "min": 0, "max": 3 },

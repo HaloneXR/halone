@@ -124,6 +124,7 @@ class ShellSettings(private val store: SettingsStore, schemaJson: String) {
         const val DEVELOPER_ENABLED = "developer.enabled"
         /** The refresh rate and frames drawn, along the bottom of the phone pad. */
         const val DEVELOPER_DISPLAY_STATS = "developer.displayStats"
+        const val TEST_MODE_ENABLED = "testMode.enabled"
         /** Off: each pair of glasses uses its driver's own tuning, and the two below are ignored. */
         const val TRACKING_CUSTOM = "tracking.custom"
         const val TRACKING_PREDICTION_MS = "tracking.predictionMs"
