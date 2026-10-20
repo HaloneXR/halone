@@ -41,6 +41,7 @@ class PhoneShell(
         settings = ShellSettings(PreferencesStore(context), asset(ShellSettings.SCHEMA_ASSET)),
         platform = this,
         nativeApps = nativeApps,
+        pluginSettings = dev.halone.shell.PluginSettings(FileStore(context, PLUGIN_SETTINGS, io)),
     )
 
     val bridge = BridgeHost(

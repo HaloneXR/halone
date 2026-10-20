@@ -116,6 +116,9 @@ interface ShellListener {
     fun onRouted(windowId: String, route: String) {}
     fun onAppsChanged() {}
     fun onPluginsChanged() {}
+
+    /** The wearer changed a setting of plugin [packageName]. */
+    fun onPluginSettingsChanged(packageName: String) {}
     fun onStatusItemsChanged() {}
 
     /** Something the browser chrome of web window [windowId] should do, such as `focus-address`. */
@@ -202,6 +205,7 @@ class Shell(
     val webApps: WebApps? = null,
     val packageApps: PackageApps? = null,
     val nativeApps: NativeApps? = null,
+    val pluginSettings: PluginSettings? = null,
 ) {
     /** The system apps, then the sites installed as apps, then the Halone apps, then the plugins' apps. */
     val apps: List<AppInfo>
@@ -455,6 +459,21 @@ class Shell(
     fun clickStatusItem(id: String) {
         val entry = statusItems.find(id) ?: throw HaloneException("no-such-item", "no such status item: $id")
         platform.statusItemClicked(entry.provider, entry.item.id)
+    }
+
+    /** Plugins as Settings lists them, each saying whether it has a page of settings. */
+    fun plugins(): List<PluginInfo> = nativeApps?.plugins().orEmpty().map { info ->
+        info.copy(hasSettings = pluginSettings?.page(info.plugin) != null)
+    }
+
+    fun pluginSettingsPage(packageName: String): PluginSettings.Page {
+        val plugin = nativeApps?.plugin(packageName) ?: throw HaloneException("no-such-plugin", "no such plugin: $packageName")
+        return pluginSettings?.page(plugin) ?: throw HaloneException("no-settings", "${plugin.label} has no settings")
+    }
+
+    fun setPluginSetting(packageName: String, key: String, value: Any?) {
+        pluginSettingsPage(packageName).values.set(key, value)
+        listeners.forEach { it.onPluginSettingsChanged(packageName) }
     }
 
     fun setPluginEnabled(packageName: String, enabled: Boolean) {

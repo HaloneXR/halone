@@ -46,13 +46,14 @@ data class NativeApp(val packageName: String, val app: ProvidedApp) {
 }
 
 /** A plugin as Settings shows it. */
-data class PluginInfo(val plugin: PluginPackage, val state: PluginState, val apps: List<NativeApp>) {
+data class PluginInfo(val plugin: PluginPackage, val state: PluginState, val apps: List<NativeApp>, val hasSettings: Boolean = false) {
     fun toJson(): JSONObject = JSONObject()
         .put("packageName", plugin.packageName)
         .put("label", plugin.label)
         .put("version", plugin.versionName)
         .put("state", state.wire)
         .put("apps", JSONArray(apps.filter { !it.app.hidden }.map { it.app.name }))
+        .put("hasSettings", hasSettings)
 }
 
 /**
@@ -140,6 +141,8 @@ class NativeApps(private val store: SettingsStore) {
         val state = stateOf(plugin.packageName)!!
         PluginInfo(plugin, state, if (state == PluginState.ENABLED) appsOf(plugin.packageName) else emptyList())
     }
+
+    fun plugin(packageName: String): PluginPackage? = found[packageName]
 
     fun list(): List<NativeApp> = runnable().flatMap { appsOf(it.packageName) }
 

@@ -248,6 +248,12 @@ export class Bridge {
       'plugins.setEnabled': ({ packageName }) => {
         throw new HaloneError('no-such-plugin', `plugins are Android apps; the simulator has none: ${packageName}`)
       },
+      'plugins.settings': ({ packageName }) => {
+        throw new HaloneError('no-such-plugin', `plugins are Android apps; the simulator has none: ${packageName}`)
+      },
+      'plugins.setSetting': ({ packageName }) => {
+        throw new HaloneError('no-such-plugin', `plugins are Android apps; the simulator has none: ${packageName}`)
+      },
       'apps.open': async ({ path, appId }) => {
         const entry = await files.stat(path)
         if (entry.kind !== 'file') throw new HaloneError('not-a-file', `not a file: ${path}`)

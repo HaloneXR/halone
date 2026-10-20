@@ -136,7 +136,7 @@ class BridgeHost(
 
     override fun onStatusItemsChanged() = broadcast("status.changed", shell.statusItems.toJson())
 
-    private fun pluginList() = JSONArray(shell.nativeApps?.plugins().orEmpty().map { it.toJson() })
+    private fun pluginList() = JSONArray(shell.plugins().map { it.toJson() })
 
     override fun onRouted(windowId: String, route: String) = emit(windowId, "window.routed", JSONObject().put("route", route))
 
@@ -300,6 +300,8 @@ class BridgeHost(
         "status.list" -> shell.statusItems.toJson()
         "status.click" -> shell.clickStatusItem(params.requireString("id")).let { null }
         "plugins.setEnabled" -> shell.setPluginEnabled(params.requireString("packageName"), params.requireBoolean("enabled")).let { null }
+        "plugins.settings" -> shell.pluginSettingsPage(params.requireString("packageName")).toJson()
+        "plugins.setSetting" -> shell.setPluginSetting(params.requireString("packageName"), params.requireString("key"), params.opt("value")).let { null }
         "apps.open" -> {
             val entry = files().stat(params.requireString("path"))
             if (entry.getString("kind") != "file") throw HaloneException("not-a-file", "not a file: ${entry.getString("path")}")
