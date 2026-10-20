@@ -574,6 +574,7 @@ class MainActivity : AppCompatActivity() {
         action("taprecord") { recordTaps() }
         action("recenter") { recenterView() }
         action("gaze") { reportGaze() }
+        action("mag") { reportMagnetometer() }
         action("frames") { reportFrames() }
         action("timing") { timingStatus() }
         action("present") { presentStatus() }
@@ -2129,6 +2130,17 @@ class MainActivity : AppCompatActivity() {
             .format(r.worstFrameMs))
     }
 
+    private fun reportMagnetometer() {
+        val mag = tracker?.magnetometer ?: run { logLine("  no tracker"); return }
+        logLine(
+            "  magnetometer ${if (mag.enabled) "on" else "off"}, ${if (mag.anchored) "anchored" else "not anchored"}, " +
+                "error %.1f°, %d corrections, %d rejected (weak %d, strength %d, vertical %d, outlier %d), %d reanchors".format(
+                    Math.toDegrees(mag.lastErrorRadians.toDouble()), mag.corrections, mag.rejections,
+                    mag.rejectedWeak, mag.rejectedMagnitude, mag.rejectedHorizontal, mag.rejectedOutlier, mag.reanchors,
+                ),
+        )
+    }
+
     private fun reportGaze() {
         val compositor = stereoSession?.compositor ?: run { logLine("not in stereo"); return }
         val hit = compositor.lastHit
@@ -2613,6 +2625,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun leaveStereo(restoreMode: Boolean = true) {
         val session = stereoSession ?: run { logLine("not in stereo"); return }
+        if (tracker != null) reportMagnetometer()
         stopBedMode()
         KeyCaptureService.router = null
         pointerHover.stop()
