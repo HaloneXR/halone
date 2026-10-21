@@ -28,6 +28,8 @@ type Item =
       enabledBy?: SettingKey
       /** Left out while this is false. */
       shown?: () => boolean
+      /** Kept on the phone, which otherwise leaves actions out. */
+      onPhone?: boolean
     }
 
 interface Group {
@@ -588,6 +590,7 @@ const allSections: Section[] = [
             button: 'Share…',
             run: () => halone.system.shareLog(),
             enabledBy: 'diagnostics.crashReports',
+            onPhone: true,
           },
         ],
       },
@@ -610,14 +613,14 @@ const allSections: Section[] = [
   },
 ]
 
-/** On the phone, without what only works in the environment: windows it would open there, and its diagnostics. */
+/** On the phone, without what only works in the environment: windows it would open there, and its diagnostics. Sharing the log works from either. */
 const sections = onPhone
   ? allSections
       .filter((section) => !section.environmentOnly)
       .map((section) => ({
         ...section,
         groups: section.groups
-          .map((group) => ({ ...group, items: group.items.filter((item) => item.kind !== 'action') }))
+          .map((group) => ({ ...group, items: group.items.filter((item) => item.kind !== 'action' || item.onPhone) }))
           .filter((group) => group.items.length > 0),
       }))
   : allSections
