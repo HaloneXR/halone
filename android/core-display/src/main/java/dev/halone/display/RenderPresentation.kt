@@ -7,13 +7,16 @@ import android.os.Build
 import android.view.Display
 import android.view.Surface
 import android.view.SurfaceHolder
+import android.view.SurfaceView
 import android.view.WindowManager
 
 /**
  * Puts a GL renderer on the glasses.
  *
- * A `Presentation` holding one `GLSurfaceView` is the whole of it, but two
- * details are not optional: the wide mode has to be pinned explicitly, because
+ * A `Presentation` holding one `SurfaceView`, drawn into by a [RenderThread]
+ * that outlives it: the glasses' display can go away and come back (or be
+ * recreated by a mode switch), and [show] on the new one carries on with the
+ * same GL context and everything in it. Two details are not optional: the wide mode has to be pinned explicitly, because
  * the display advertises it only while the glasses are in SBS and will otherwise
  * hand back a mirror-mode surface; and `FLAG_KEEP_SCREEN_ON` here covers the
  * external display only, so the phone still needs its own hold (and, in the
@@ -26,8 +29,13 @@ class RenderPresentation(
 ) {
     private var presentation: Presentation? = null
 
-    var surfaceView: GLSurfaceView? = null
-        private set
+    /** The view of the current [presentation]; a replaced one may still report its surface late. */
+    private var currentView: SurfaceView? = null
+    private var renderThread: RenderThread? = null
+    private var renderer: GLSurfaceView.Renderer? = null
+
+    /** Told on the UI thread when the system takes the presentation down, as when the display goes away. */
+    var onLost: (() -> Unit)? = null
 
     /** Refresh rate of the mode asked for in the last [show], or the display's own. */
     var refreshHz: Float = 60f
@@ -35,7 +43,13 @@ class RenderPresentation(
 
     /** [rateHz] is the rate to ask for on a 2D display; null asks for its fastest. */
     fun show(display: Display, renderer: GLSurfaceView.Renderer, rateHz: Float? = null) {
-        dismiss()
+        if (renderer !== this.renderer) dismiss()
+        detach()
+        val thread = renderThread ?: RenderThread(renderer, log).also {
+            it.start()
+            renderThread = it
+            this.renderer = renderer
+        }
 
         val stereo = widestStereoMode(display)
         val wide = stereo ?: flatMode(display, rateHz)
@@ -49,10 +63,7 @@ class RenderPresentation(
         // the glasses' own mode.
         val forceRate = stereo == null && wide != null
         val rate = refreshHz
-        val view = object : GLSurfaceView(context) {}.apply {
-            setEGLContextClientVersion(3)
-            setRenderer(renderer)
-            renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
+        val view = SurfaceView(context).apply {
             // The mode id alone is a request the system may weigh against
             // others; saying the surface itself is a fixed-rate source at that
             // rate is what tells it a 60 Hz mode would drop frames.
@@ -73,18 +84,22 @@ class RenderPresentation(
                         runCatching { holder.surface.setFrameRate(rate, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE) }
                     }
                 }
-                override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
-                override fun surfaceDestroyed(holder: SurfaceHolder) = Unit
+                override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+                    if (currentView === this@apply) thread.setSurface(holder.surface, width, height)
+                }
+
+                override fun surfaceDestroyed(holder: SurfaceHolder) = thread.releaseSurface(holder.surface)
             })
         }
-        surfaceView = view
 
+        currentView = view
         presentation = KeptPresentation(context, display, log).apply {
             setOnDismissListener { dismissed ->
                 if (presentation !== dismissed) return@setOnDismissListener
                 presentation = null
-                surfaceView = null
+                currentView = null
                 log("  presentation on display ${display.displayId} taken down by the system")
+                onLost?.invoke()
             }
             window?.let { w ->
                 wide?.let { mode ->
@@ -116,11 +131,21 @@ class RenderPresentation(
         log("  presentation shown on display ${display.displayId}, requested mode ${wide?.modeId} at ${"%.0f".format(refreshHz)} Hz")
     }
 
-    fun dismiss() {
+    /** Takes the presentation off its display and keeps the renderer and its context for the next [show]. */
+    fun detach() {
         val shown = presentation
         presentation = null
-        surfaceView = null
+        currentView = null
         shown?.dismiss()
+        renderThread?.setSurface(null)
+    }
+
+    /** Ends it all, context included. */
+    fun dismiss() {
+        detach()
+        renderThread?.stop()
+        renderThread = null
+        renderer = null
     }
 
     /**

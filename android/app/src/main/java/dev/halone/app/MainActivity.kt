@@ -469,22 +469,76 @@ class MainActivity : AppCompatActivity() {
     /** The mode the running environment was started in. */
     private var enteredMode: DisplayMode? = null
 
+    /** The rate to ask Android for, for glasses that take whatever rate the phone sends. */
+    private fun rateFor(device: GlassesDevice, mode: DisplayMode?): Float? =
+        mode?.refreshHz?.takeIf { device.display?.rateChosenByHost == true }
+
+    /** A mode switch or a lost display being carried through; the windows stay open either way. */
+    private var displayWork: Job? = null
+
     /**
-     * Starts the environment again in the mode the refresh rate and 3D
-     * settings ask for. The switch recreates the glasses' display, and the
-     * windows with it.
+     * Puts the running environment into the mode the refresh rate and 3D
+     * settings ask for. The switch recreates the glasses' display; the
+     * compositor and its windows move onto the new one.
      */
-    private fun restartInChosenMode() {
+    private fun applyChosenMode() {
         val device = connection.device ?: return
-        if (shellSession == null || starting != null) return
+        val session = stereoSession ?: return
+        if (shellSession == null || starting != null || displayWork != null) return
         val wanted = chosenMode(device) ?: return
         if (wanted.key == enteredMode?.key) return
-        logLine("▶ restarting in $wanted")
-        lifecycleScope.launch {
-            delay(MODE_RESTART_DELAY_MS)
-            if (shellSession == null || starting != null) return@launch
-            leaveStereo(restoreMode = false)
-            toggleEnvironment()
+        displayWork = lifecycleScope.launch {
+            try {
+                // So the request that changed the setting is answered first.
+                delay(MODE_SWITCH_DELAY_MS)
+                logLine("▶ switching to $wanted")
+                session.detach()
+                val switched = session.enterStereo(device, wanted)
+                if (switched != null) enteredMode = wanted
+                val display = switched ?: session.awaitGlassesDisplay(device, null, DISPLAY_RETURN_MS)
+                if (display == null) {
+                    logLine("  no glasses display to go back to")
+                    return@launch
+                }
+                session.moveTo(display, rateFor(device, enteredMode))
+                applyTrackingSettings()
+            } finally {
+                displayWork = null
+                displayChanged()
+            }
+        }
+    }
+
+    /**
+     * The system took the environment off the glasses: their display went
+     * away, usually with the video link, and comes back under a new id. Moves
+     * the compositor onto it when it does, windows and all. Unplugging ends
+     * the session instead, through [glassesGone].
+     */
+    private fun glassesDisplayLost() {
+        if (isFinishing || isDestroyed || shellSession == null || displayWork != null) return
+        val session = stereoSession ?: return
+        val lostId = session.display?.displayId
+        session.detach()
+        testDisplay?.let {
+            session.moveTo(it.display)
+            return
+        }
+        logLine("▶ the glasses' display went away; waiting for it to come back")
+        displayWork = lifecycleScope.launch {
+            try {
+                while (shellSession != null) {
+                    val device = connection.device ?: return@launch
+                    val display = session.awaitGlassesDisplay(device, lostId, DISPLAY_RETURN_MS) ?: continue
+                    logLine("  back on display ${display.displayId}")
+                    session.moveTo(display, rateFor(device, enteredMode))
+                    applyTrackingSettings()
+                    return@launch
+                }
+            } finally {
+                displayWork = null
+                displayChanged()
+            }
         }
     }
 
@@ -555,6 +609,7 @@ class MainActivity : AppCompatActivity() {
         }
         action("start") { toggleEnvironment() }
         action("test-mode") { startTestMode() }
+        action("relink") { testDisplay?.recreate() ?: logLine("  only in test mode") }
         action("stop") { if (stereoSession != null) leaveStereo() }
         action("usb") { dumpUsb() }
         action("connect") { requestPermissionAndConnect() }
@@ -2049,6 +2104,7 @@ class MainActivity : AppCompatActivity() {
 
         val session = stereoSession ?: GlassesStereoSession(this) { logOnMain(it) }
         session.onDisplayChanged = { runOnUiThread { displayChanged() } }
+        session.onLost = ::glassesDisplayLost
         stereoSession = session
 
         return lifecycleScope.launch {
@@ -2058,7 +2114,7 @@ class MainActivity : AppCompatActivity() {
                 return@launch
             }
 
-            session.show(display, head, device.optics, displayClock, mode?.refreshHz?.takeIf { device.display?.rateChosenByHost == true })
+            session.show(display, head, device.optics, displayClock, rateFor(device, mode))
             // A compositor built while the glasses pin the image must draw head-locked.
             session.compositor?.lockToHead = device.onboardPinning?.enabled == true
             applyTrackingSettings()
@@ -2301,7 +2357,7 @@ class MainActivity : AppCompatActivity() {
                 requestProjection = ::requestProjection,
                 requestPermissions = ::requestAndroidPermissions,
                 display = ::displayState,
-                restartDisplay = { runOnUiThread { restartInChosenMode() } },
+                restartDisplay = { runOnUiThread { applyChosenMode() } },
                 log = { logOnMain(it) },
             )
         } catch (missing: java.io.FileNotFoundException) {
@@ -2324,6 +2380,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onSettingsChanged() {
+                runOnUiThread { applyChosenMode() }
                 pointerPad?.setFollowing(shell.shell.settings.boolean(ShellSettings.FOLLOW_ENABLED))
                 applyTrackingSettings()
             }
@@ -2626,6 +2683,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun leaveStereo(restoreMode: Boolean = true) {
         val session = stereoSession ?: run { logLine("not in stereo"); return }
+        displayWork?.cancel()
+        displayWork = null
         if (tracker != null) reportMagnetometer()
         stopBedMode()
         KeyCaptureService.router = null
@@ -2688,7 +2747,10 @@ class MainActivity : AppCompatActivity() {
         const val STEREO_TIMEOUT_MS = 20_000L
 
         /** Long enough for the request that asked for a restart to be answered first. */
-        const val MODE_RESTART_DELAY_MS = 300L
+        const val MODE_SWITCH_DELAY_MS = 300L
+
+        /** How long one wait for the glasses' display lasts; a lost one is waited for until it returns. */
+        const val DISPLAY_RETURN_MS = 10_000L
         const val PHASE_SETTLE_MS = 1_000L
         const val PHASE_MEASURE_MS = 3_000L
 

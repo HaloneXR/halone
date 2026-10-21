@@ -26,8 +26,6 @@ type Item =
       button: string
       run: () => Promise<unknown>
       enabledBy?: SettingKey
-      /** Left out while this is false. */
-      shown?: () => boolean
       /** Kept on the phone, which otherwise leaves actions out. */
       onPhone?: boolean
     }
@@ -324,17 +322,8 @@ const allSections: Section[] = [
             help: 'One image per eye, so windows and videos have depth. Off shows both eyes the same picture.',
             unavailable: () => (chosenRate.value?.stereo === false ? `The glasses only show 2D at ${chosenRate.value.hz} Hz.` : null),
           },
-          {
-            kind: 'action',
-            key: 'display.restart',
-            label: 'Restart to apply',
-            help: 'The environment starts again in the new mode. Open windows close.',
-            button: 'Restart',
-            run: () => halone.display.restart(),
-            shown: () => display.value?.restartNeeded === true,
-          },
         ],
-        note: 'Changes apply the next time the environment starts.',
+        note: 'Changes apply straight away, and open windows stay open. The glasses go dark for a moment while they switch.',
       },
       {
         items: [
@@ -647,9 +636,7 @@ function learnMore() {
 }
 
 function shown(groups: Group[]) {
-  return groups
-    .filter((group) => !group.shown || group.shown())
-    .map((group) => ({ ...group, items: group.items.filter((item) => item.kind !== 'action' || !item.shown || item.shown()) }))
+  return groups.filter((group) => !group.shown || group.shown())
 }
 
 function range(key: SettingKey) {

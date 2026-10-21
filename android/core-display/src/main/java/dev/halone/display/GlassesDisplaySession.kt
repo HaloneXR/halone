@@ -96,6 +96,16 @@ class GlassesDisplaySession(
         return display
     }
 
+    /**
+     * The glasses' display other than [notId]: one already there, or the
+     * next to arrive within [timeoutMs]. Null if none comes.
+     */
+    suspend fun awaitGlassesDisplay(device: GlassesDevice, notId: Int?, timeoutMs: Long): Display? {
+        val accept = { display: Display -> display.displayId != notId && display.isValid && isGlasses(display, device) }
+        displayManager.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION).firstOrNull(accept)?.let { return it }
+        return awaitDisplay(timeoutMs, accept)
+    }
+
     fun findGlassesDisplay(device: GlassesDevice): Display? {
         val candidates = displayManager.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION).filter(::isPublic)
         return candidates.firstOrNull { display -> named(display, device) } ?: candidates.firstOrNull()

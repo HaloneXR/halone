@@ -621,6 +621,7 @@ class StereoCompositor(
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
         presentTimingAvailable = FrameTimestamps.enable()
+        lastFrameId = null
         frameWidth = width
         frameHeight = height
         mono = width < 2 * height
