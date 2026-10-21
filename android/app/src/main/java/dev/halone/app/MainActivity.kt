@@ -256,7 +256,8 @@ class MainActivity : AppCompatActivity() {
         val mode = display.mode
         val metrics = android.util.DisplayMetrics().also { @Suppress("DEPRECATION") display.getRealMetrics(it) }
         return "\"${display.name}\" ${mode.physicalWidth}x${mode.physicalHeight}@${"%.0f".format(mode.refreshRate)}" +
-            " ${metrics.widthPixels}x${metrics.heightPixels} ${metrics.densityDpi}dpi state ${display.state}"
+            " ${metrics.widthPixels}x${metrics.heightPixels} ${metrics.densityDpi}dpi state ${display.state}" +
+            " frames at ${"%.0f".format(display.refreshRate)}"
     }
 
     private fun refreshHome() {
