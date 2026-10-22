@@ -18,6 +18,7 @@ internal object XrealOneReport {
     private const val OFF_TYPE = 0x18
     private const val OFF_GYRO = 0x1C
     private const val OFF_ACCEL = 0x28
+    private const val OFF_MAGNET = 0x34
     private const val OFF_FRAME = 0x45
 
     fun type(b: ByteArray, at: Int): Int = u32le(b, at + OFF_TYPE).toInt()
@@ -29,8 +30,8 @@ internal object XrealOneReport {
 
     fun timestampNs(b: ByteArray, at: Int): Long = u64le(b, at + OFF_TIMESTAMP)
 
-    /** Null unless this is a finite IMU report. */
-    fun inertial(b: ByteArray, at: Int, axes: AxisConvention): TrackingSample.Inertial? {
+    /** Null unless this is a finite IMU report. [magnet] rides along, already in the canonical frame. */
+    fun inertial(b: ByteArray, at: Int, axes: AxisConvention, magnet: Vec3? = null): TrackingSample.Inertial? {
         if (type(b, at) != TYPE_IMU) return null
         val gyro = vec3(b, at + OFF_GYRO) ?: return null
         val accel = vec3(b, at + OFF_ACCEL) ?: return null
@@ -38,7 +39,17 @@ internal object XrealOneReport {
             timestampNs = timestampNs(b, at),
             gyro = axes.apply(gyro),
             accel = axes.apply(accel),
+            magnetRaw = magnet,
         )
+    }
+
+    /**
+     * Null unless this is a finite magnetometer report. Uncalibrated; a still
+     * One Pro reads ~40 with ~1% noise, the size of Earth's field in µT.
+     */
+    fun magnet(b: ByteArray, at: Int, axes: AxisConvention): Vec3? {
+        if (type(b, at) != TYPE_MAGNETOMETER) return null
+        return vec3(b, at + OFF_MAGNET)?.let(axes::apply)
     }
 
     private fun vec3(b: ByteArray, at: Int): Vec3? {

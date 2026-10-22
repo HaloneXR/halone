@@ -794,6 +794,41 @@ class HeadTrackerTest {
     }
 
     @Test
+    fun `recentring in bed mode levels roll too`() {
+        val tracker = HeadTracker(optics, OrientationFilter(accelWeight = 0f))
+        var t = turn(tracker, 0L, degreesPerSecond(x = 90.0))
+        tracker.enterBedMode()
+        t = turn(tracker, t, degreesPerSecond(z = 25.0))
+        t = turn(tracker, t, degreesPerSecond(x = -10.0))
+
+        tracker.recenter()
+        settle(tracker, t)
+
+        val (yaw, pitch, roll) = tracker.pose.orientation.toEulerDegrees()
+        assertEquals(0f, yaw, 0.5f)
+        assertEquals(0f, pitch, 0.5f)
+        assertEquals(0f, roll, 0.5f)
+    }
+
+    @Test
+    fun `bed mode relearns the magnetic reference on the way in and out`() {
+        val tracker = HeadTracker(optics, OrientationFilter(accelWeight = 0f))
+        var t = 0L
+        fun field() {
+            t += 1_000_000L
+            tracker.onSample(TrackingSample.Inertial(t, Vec3.ZERO, Vec3(0f, 9.81f, 0f), magnetRaw = Vec3(300f, -200f, 0f)))
+        }
+        repeat(2) { field() }
+        assertTrue(tracker.magnetometer.anchored)
+
+        tracker.enterBedMode()
+        assertTrue(!tracker.magnetometer.anchored)
+        repeat(2) { field() }
+        tracker.exitBedMode()
+        assertTrue(!tracker.magnetometer.anchored)
+    }
+
+    @Test
     fun `leaving bed mode measures against gravity again`() {
         val tracker = HeadTracker(optics, OrientationFilter(accelWeight = 0f))
         var t = turn(tracker, 0L, degreesPerSecond(x = 90.0))

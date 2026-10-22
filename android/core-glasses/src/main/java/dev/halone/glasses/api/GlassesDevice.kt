@@ -1,6 +1,7 @@
 package dev.halone.glasses.api
 
 import java.io.Closeable
+import kotlin.math.roundToInt
 
 /**
  * A connected pair of glasses.
@@ -72,7 +73,19 @@ interface DisplayControl {
      * callers must be ready to rebuild rather than assuming a seamless switch.
      */
     val modeChangeRecreatesDisplay: Boolean
+
+    /**
+     * True when the glasses take whatever refresh rate the host's video
+     * signal has (XREAL One series): modes that differ only in rate are one
+     * mode to the glasses, and the host picks the rate by the display mode it
+     * asks Android for.
+     */
+    val rateChosenByHost: Boolean get() = false
 }
+
+/** The same layout and frame, whatever the refresh rate. */
+fun DisplayMode.sameSignalAs(other: DisplayMode): Boolean =
+    layout == other.layout && frameWidth == other.frameWidth && frameHeight == other.frameHeight
 
 /**
  * The glasses' own world-locking. While [enabled], the glasses move the image
@@ -147,6 +160,26 @@ fun DisplayControl.preferredStereoMode(): DisplayMode? =
 /** The best mono mode, for the monoscopic fallback and for exiting stereo. */
 fun DisplayControl.preferredMonoMode(): DisplayMode? =
     supportedModes.filter { !it.isStereo }.maxWithOrNull(MODE_PREFERENCE)
+
+/** A refresh rate the glasses offer, and whether any 3D mode runs at it. */
+data class RefreshRate(val hz: Int, val stereo: Boolean)
+
+fun DisplayControl.refreshRates(): List<RefreshRate> =
+    supportedModes.groupBy { it.refreshHz.roundToInt() }
+        .map { (hz, modes) -> RefreshRate(hz, modes.any { it.isStereo }) }
+        .sortedBy { it.hz }
+
+/**
+ * The mode for the wearer's choice of rate and 3D. A rate the glasses only
+ * offer in 2D gives a 2D mode whatever [stereo] says; a rate they do not offer
+ * at all gives their preferred mode.
+ */
+fun DisplayControl.modeFor(refreshHz: Int, stereo: Boolean): DisplayMode? {
+    val (threeD, twoD) = supportedModes.filter { it.refreshHz.roundToInt() == refreshHz }.partition { it.isStereo }
+    val best = if (stereo) threeD.maxWithOrNull(MODE_PREFERENCE) ?: twoD.maxWithOrNull(MODE_PREFERENCE)
+    else twoD.maxWithOrNull(MODE_PREFERENCE) ?: threeD.maxWithOrNull(MODE_PREFERENCE)
+    return best ?: if (stereo) preferredStereoMode() else preferredMonoMode() ?: preferredStereoMode()
+}
 
 private val MODE_PREFERENCE: Comparator<DisplayMode> = compareBy(
     { if (it.verified) 1 else 0 },

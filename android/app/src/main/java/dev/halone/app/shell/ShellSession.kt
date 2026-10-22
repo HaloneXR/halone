@@ -26,6 +26,7 @@ import dev.halone.glasses.api.BrightnessControl
 import dev.halone.app.CrashReports
 import dev.halone.shell.AppInfo
 import dev.halone.shell.Battery
+import dev.halone.shell.DisplayState
 import dev.halone.shell.BrowserControl
 import dev.halone.shell.BridgeHost
 import dev.halone.shell.Shell
@@ -87,6 +88,8 @@ class ShellSession(
     private val requestProjection: ((android.media.projection.MediaProjection?) -> Unit) -> Unit,
     /** Asks the wearer, on the phone, for Android permissions; told which were granted. */
     private val requestPermissions: (Array<String>, (Set<String>) -> Unit) -> Unit,
+    private val display: () -> DisplayState,
+    private val restartDisplay: () -> Unit,
     private val log: (String) -> Unit,
 ) : ShellPlatform {
     private val handler = Handler(Looper.getMainLooper())
@@ -114,6 +117,7 @@ class ShellSession(
     private val pluginWindows = HashMap<String, PluginPanelEngine>()
     private val pluginIcons = PluginIcons(java.io.File(context.filesDir, "plugin-icons"), { pluginConnections[it] }, log)
     private val nativeApps = NativeApps(FileStore(context, "plugins.json", hardware))
+    private val pluginSettings = dev.halone.shell.PluginSettings(FileStore(context, PLUGIN_SETTINGS, hardware))
     private val mediaBackend = MediaPlayerBackend({ stereo.compositor }, log)
     private val notices = TransientNotice { stereo.compositor }
     private val volume = VolumeIndicator(context, notices)
@@ -128,6 +132,7 @@ class ShellSession(
         webApps = webApps,
         packageApps = packageApps,
         nativeApps = nativeApps,
+        pluginSettings = pluginSettings,
     ).also { it.windowSizes = PreferencesWindowSizes(context) }
 
     private val files = SharedFiles(::storageRoots, AllFilesAccess(context)).also { files ->
@@ -226,6 +231,7 @@ class ShellSession(
         val runnable = nativeApps.runnable().associateBy { it.packageName }
         pluginConnections.entries.toList().forEach { (packageName, connection) ->
             if (runnable[packageName] == connection.plugin) return@forEach
+            connection.environmentStopped()
             connection.unbind()
             pluginConnections.remove(packageName)
             shell.windows().filter { it.kind == WindowKind.NATIVE && it.appId?.startsWith("$packageName/") == true }.forEach { shell.close(it.id) }
@@ -236,7 +242,23 @@ class ShellSession(
             connection.listener = pluginListener
             pluginConnections[plugin.packageName] = connection
             connection.bind()
+            sendSettings(plugin.packageName)
+            connection.environmentStarted()
         }
+    }
+
+    private fun sendSettings(packageName: String) {
+        val connection = pluginConnections[packageName] ?: return
+        val values = pluginSettings.page(connection.plugin)?.values?.toJson() ?: return
+        val bundle = android.os.Bundle()
+        values.keys().forEach { key ->
+            when (val value = values.get(key)) {
+                is Boolean -> bundle.putBoolean(key, value)
+                is Number -> bundle.putDouble(key, value.toDouble())
+                is String -> bundle.putString(key, value)
+            }
+        }
+        connection.sendSettings(bundle)
     }
 
     private val devReceiver by lazy { DevReceiver(context, shell, background, log) }
@@ -245,6 +267,7 @@ class ShellSession(
         handler.post(poller)
         shell.addListener(object : dev.halone.shell.ShellListener {
             override fun onPluginsChanged() = connectPlugins()
+            override fun onPluginSettingsChanged(packageName: String) = sendSettings(packageName)
         })
         pluginDirectory.watch { scanPlugins() }
         scanPlugins()
@@ -270,7 +293,10 @@ class ShellSession(
         notices.clear()
         runCatching { context.unregisterReceiver(batteryReceiver) }
         shell.windows().forEach { shell.close(it.id) }
-        pluginConnections.values.forEach { it.unbind() }
+        pluginConnections.values.forEach {
+            it.environmentStopped()
+            it.unbind()
+        }
         pluginConnections.clear()
         pluginIo.shutdown()
         shell.overlayIds.forEach { bridge.disconnect(it) }
@@ -583,6 +609,10 @@ class ShellSession(
         if (!CrashReports.shareLog(context)) throw HaloneException("unavailable", "crash reports are off")
     }
 
+    override fun displayState() = display()
+
+    override fun restartDisplay() = restartDisplay.invoke()
+
     override fun notice(text: String) = notices.show(text, forMs = DOWNLOAD_NOTICE_MS)
 
     /** An app's icon, scaled down and kept as a `data:` URL so the launcher shows it offline. */
@@ -787,6 +817,7 @@ class ShellSession(
         val spacing = settings.number(ShellSettings.SLOT_SPACING_DEGREES).toFloat()
         if (spacing != scene.slotSpacingDegrees) scene.layOutCylindrical(spacing, immediate = false)
 
+        if (changedKey == ShellSettings.DISPLAY_REFRESH_RATE || changedKey == ShellSettings.DISPLAY_STEREO) shell.displayChanged()
         if (changedKey == ShellSettings.DISPLAY_BRIGHTNESS) {
             val control = brightness
             val level = settings.number(ShellSettings.DISPLAY_BRIGHTNESS)

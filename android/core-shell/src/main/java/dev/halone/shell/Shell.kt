@@ -6,6 +6,7 @@ import dev.halone.compositor.Scene
 import dev.halone.compositor.TitleBar
 import dev.halone.compositor.SizeLimits
 import dev.halone.compositor.StereoRegion
+import org.json.JSONArray
 import org.json.JSONObject
 
 /** What the shell needs from whatever hosts it: engines, the head, and the hardware. */
@@ -45,6 +46,10 @@ interface ShellPlatform {
 
     /** Offers Halone's log to the phone's share sheet, while crash reports are on. */
     fun shareLog(): Unit = throw HaloneException("unavailable", "this host keeps no log")
+
+    fun displayState(): DisplayState = DisplayState()
+
+    fun restartDisplay(): Unit = throw HaloneException("unavailable", "the environment is not running")
 
     /** A short message on the glasses, gone by itself. */
     fun notice(text: String) {}
@@ -104,12 +109,16 @@ interface ShellListener {
     fun onFocusChanged(previous: String?, current: String?) {}
     fun onLauncherChanged(open: Boolean) {}
     fun onBatteryChanged(battery: Battery) {}
+    fun onDisplayChanged() {}
     fun onBrowserChanged(windowId: String, state: BrowserState) {}
     fun onFileOpened(windowId: String, path: String) {}
     fun onRecordingChanged(state: RecordingState) {}
     fun onRouted(windowId: String, route: String) {}
     fun onAppsChanged() {}
     fun onPluginsChanged() {}
+
+    /** The wearer changed a setting of plugin [packageName]. */
+    fun onPluginSettingsChanged(packageName: String) {}
     fun onStatusItemsChanged() {}
 
     /** Something the browser chrome of web window [windowId] should do, such as `focus-address`. */
@@ -129,6 +138,25 @@ data class RecordingState(val recording: Boolean = false, val startedAt: Long? =
 }
 
 data class Battery(val level: Double, val charging: Boolean)
+
+data class DisplayRate(val hz: Int, val stereo: Boolean, val matchesPhone: Boolean = true)
+
+data class DisplayState(
+    val running: Boolean = false,
+    val stereo: Boolean = false,
+    val refreshHz: Double? = null,
+    val renderFps: Double? = null,
+    val rates: List<DisplayRate> = emptyList(),
+    val restartNeeded: Boolean = false,
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("running", running)
+        .put("stereo", stereo)
+        .put("refreshHz", refreshHz ?: JSONObject.NULL)
+        .put("renderFps", renderFps ?: JSONObject.NULL)
+        .put("rates", JSONArray(rates.map { JSONObject().put("hz", it.hz).put("stereo", it.stereo).put("matchesPhone", it.matchesPhone) }))
+        .put("restartNeeded", restartNeeded)
+}
 
 enum class WindowKind(val wire: String) { APP("app"), WEB("web"), NATIVE("native") }
 
@@ -177,6 +205,7 @@ class Shell(
     val webApps: WebApps? = null,
     val packageApps: PackageApps? = null,
     val nativeApps: NativeApps? = null,
+    val pluginSettings: PluginSettings? = null,
 ) {
     /** The system apps, then the sites installed as apps, then the Halone apps, then the plugins' apps. */
     val apps: List<AppInfo>
@@ -432,6 +461,21 @@ class Shell(
         platform.statusItemClicked(entry.provider, entry.item.id)
     }
 
+    /** Plugins as Settings lists them, each saying whether it has a page of settings. */
+    fun plugins(): List<PluginInfo> = nativeApps?.plugins().orEmpty().map { info ->
+        info.copy(hasSettings = pluginSettings?.page(info.plugin) != null)
+    }
+
+    fun pluginSettingsPage(packageName: String): PluginSettings.Page {
+        val plugin = nativeApps?.plugin(packageName) ?: throw HaloneException("no-such-plugin", "no such plugin: $packageName")
+        return pluginSettings?.page(plugin) ?: throw HaloneException("no-settings", "${plugin.label} has no settings")
+    }
+
+    fun setPluginSetting(packageName: String, key: String, value: Any?) {
+        pluginSettingsPage(packageName).values.set(key, value)
+        listeners.forEach { it.onPluginSettingsChanged(packageName) }
+    }
+
     fun setPluginEnabled(packageName: String, enabled: Boolean) {
         val store = nativeApps ?: throw HaloneException("unavailable", "this host has no plugins")
         store.setEnabled(packageName, enabled)
@@ -615,6 +659,13 @@ class Shell(
     fun openKeyCaptureSettings() = platform.openKeyCaptureSettings()
 
     fun shareLog() = platform.shareLog()
+
+    fun displayState() = platform.displayState()
+
+    fun restartDisplay() = platform.restartDisplay()
+
+    /** The glasses started, stopped or changed mode; listeners read [displayState] again. */
+    fun displayChanged() = listeners.forEach { it.onDisplayChanged() }
 
     fun clearBrowsingData(cookies: Boolean, cache: Boolean) {
         if (cookies || cache) platform.clearBrowsingData(cookies, cache)

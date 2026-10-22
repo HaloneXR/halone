@@ -49,6 +49,10 @@ class PluginConnection(
 
     @Volatile
     private var provider: IPanelProvider? = null
+
+    /** The contract the connected plugin speaks; what it can be told depends on it. */
+    @Volatile
+    private var contract = 0
     private var bound = false
     private val waiting = ArrayList<(IPanelProvider) -> Unit>()
     private val stopListeners = LinkedHashSet<() -> Unit>()
@@ -90,6 +94,7 @@ class PluginConnection(
                 val ready = runCatching {
                     val version = connected.contractVersion()
                     check(version >= 1) { "contract version $version" }
+                    contract = version
                     connected.setHost(host)
                 }
                 main.post {
@@ -165,6 +170,22 @@ class PluginConnection(
 
     fun removeStopListener(onStop: () -> Unit) {
         stopListeners -= onStop
+    }
+
+    /** The wearer's values for the plugin's settings; contract 2 and up. */
+    fun sendSettings(values: Bundle) = whenConnected { connected ->
+        if (contract >= 2) runCatching { connected.settingsChanged(values) }
+    }
+
+    /** Contract 2 and up. */
+    fun environmentStarted() = whenConnected { connected ->
+        if (contract >= 2) runCatching { connected.environmentStarted() }
+    }
+
+    /** Told straight away, before an unbind that would otherwise outrun it; contract 2 and up. */
+    fun environmentStopped() {
+        val connected = provider ?: return
+        if (contract >= 2) runCatching { connected.environmentStopped() }
     }
 
     fun clickStatusItem(id: String) = whenConnected { connected ->

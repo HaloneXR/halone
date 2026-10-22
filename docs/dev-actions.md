@@ -31,6 +31,7 @@ adb logcat -s Halone:I
 | `recenter` | make the current heading forward |
 | `gaze`     | report where the pointer hits |
 | `frames` / `timing` / `present` / `hitches` | frame health, display timing and present timing |
+| `phasesweep` | how steadily frames reach the glasses at each draw phase, a tenth of a refresh apart (40 s) |
 | `panels` / `why` | every panel's slot and heading; what the arrangement is doing |
 | `shellstatus` | shell windows and their bridge connections |
 | `focusfield` / `focustap` | focus a text field, or tap the middle, of the focused window |

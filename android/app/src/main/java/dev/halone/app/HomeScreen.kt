@@ -7,10 +7,12 @@ import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
 import android.content.res.ColorStateList
 import android.view.Gravity
+import android.os.SystemClock
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 
@@ -35,11 +37,39 @@ class HomeScreen(
     onSettings: () -> Unit,
     onShareReport: () -> Unit,
     onDismissReport: () -> Unit,
+    private val onTestModeUnlocked: () -> Unit,
 ) {
     private val density = context.resources.displayMetrics.density
     private var status = GlassesStatus.DISCONNECTED
 
-    private val icon = Symbols.view(context, "eyeglasses", 168f, Color.WHITE)
+    var testModeUnlocked = false
+
+    private var iconTaps = 0
+    private var lastIconTapAt = 0L
+    private var toast: Toast? = null
+
+    private val icon = Symbols.view(context, "eyeglasses", 168f, Color.WHITE).apply {
+        setOnClickListener { iconTapped(context) }
+    }
+
+    private fun iconTapped(context: Context) {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastIconTapAt > TAP_RESET_MS) iconTaps = 0
+        lastIconTapAt = now
+        iconTaps++
+        val left = TEST_MODE_TAPS - iconTaps
+        val message = when {
+            testModeUnlocked -> "Test mode is already on"
+            left == 0 -> "Test mode is on".also {
+                iconTaps = 0
+                onTestModeUnlocked()
+            }
+            left <= COUNTDOWN_FROM -> if (left == 1) "You are now 1 step away from test mode" else "You are now $left steps away from test mode"
+            else -> return
+        }
+        toast?.cancel()
+        toast = Toast.makeText(context, message, Toast.LENGTH_SHORT).also { it.show() }
+    }
 
     private val title = TextView(context).apply {
         textSize = 28f
@@ -220,6 +250,9 @@ class HomeScreen(
     private fun dp(value: Int) = (value * density).toInt()
 
     private companion object {
+        const val TEST_MODE_TAPS = 10
+        const val COUNTDOWN_FROM = 5
+        const val TAP_RESET_MS = 3_000L
         val ACCENT = Color.rgb(0x5c, 0xc8, 0xff)
         val STOP = Color.rgb(0x5a, 0x1f, 0x24)
         val DISABLED = Color.rgb(0x1d, 0x25, 0x33)

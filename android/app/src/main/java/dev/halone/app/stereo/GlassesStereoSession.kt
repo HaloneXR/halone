@@ -46,12 +46,28 @@ class GlassesStereoSession(
     var autoPaceOnLatch = true
         private set
 
+    /** Glasses pacing as this session would choose it: for a rate the phone's screen is out of step with. */
+    var autoPaceToGlasses = false
+        private set
+
     /** The glasses' display the compositor was last shown on. */
     var display: Display? = null
         private set
 
+    /** Told on the UI thread when the system takes the compositor's window off the glasses. */
+    var onLost: (() -> Unit)?
+        get() = presentation.onLost
+        set(value) { presentation.onLost = value }
+
+    /** Told on any thread when the frame turns 2D or 3D, or the display changes rate. */
+    @Volatile
+    var onDisplayChanged: (() -> Unit)? = null
+
     suspend fun enterStereo(device: GlassesDevice, mode: DisplayMode? = null): Display? =
         displays.enterStereo(device, mode)
+
+    suspend fun awaitGlassesDisplay(device: GlassesDevice, notId: Int?, timeoutMs: Long): Display? =
+        displays.awaitGlassesDisplay(device, notId, timeoutMs)
 
     /** Builds the compositor and shows it. Must run on the UI thread. */
     fun show(
@@ -59,30 +75,59 @@ class GlassesStereoSession(
         tracker: HeadTracker,
         optics: Optics,
         displayClock: DisplayClock? = null,
+        rateHz: Float? = null,
     ) {
         dismiss()
         this.optics = optics
-        this.display = display
+        this.displayClock = displayClock
         compositor = StereoCompositor(tracker, optics, scene, log).also {
             // The tracker already loaded it, and the two must agree: the head
             // frame the tracker publishes is defined by the same eye rotations
             // the compositor renders with.
             it.calibration = tracker.calibration
             it.displayClock = displayClock
-            presentation.show(display, it)
-            // The rate the display actually runs at, not the one asked for:
-            // **[measured]** a OnePlus 12 accepts the request for 120 Hz on a
-            // GT Max all the way down to SurfaceFlinger and still drives the
-            // link at 60, and timing a 60 Hz panel as 120 under-predicts by a
-            // frame and halves the scanout span.
-            it.refreshHz = display.refreshRate
-            watchRate(display, it)
-            // Latch pacing waits on frame timestamps that arrive a beat late;
-            // tuned at XREAL's 60 Hz it fits, but at 120 Hz without a display
-            // clock (RayNeo GT series, measured) it halved the frame rate.
-            autoPaceOnLatch = !(displayClock == null && presentation.refreshHz > 90f)
-            it.paceOnLatch = autoPaceOnLatch
+            it.onStereoChanged = { onDisplayChanged?.invoke() }
+            meterFrames(it)
+            present(it, display, rateHz)
         }
+    }
+
+    /**
+     * Carries the running compositor over to [display], windows and all: the
+     * glasses' display came back after going away, or a mode switch recreated
+     * it. Must run on the UI thread.
+     */
+    fun moveTo(display: Display, rateHz: Float? = null) {
+        val compositor = compositor ?: return
+        present(compositor, display, rateHz)
+    }
+
+    /** Takes the compositor off the glasses and keeps it, for [moveTo]. */
+    fun detach() {
+        unwatchRate()
+        presentation.detach()
+    }
+
+    private var displayClock: DisplayClock? = null
+
+    private fun present(compositor: StereoCompositor, display: Display, rateHz: Float?) {
+        this.display = display
+        presentation.show(display, compositor, rateHz)
+        // The rate the display actually runs at, not the one asked for:
+        // **[measured]** a OnePlus 12 accepts the request for 120 Hz on a
+        // GT Max all the way down to SurfaceFlinger and still drives the
+        // link at 60, and timing a 60 Hz panel as 120 under-predicts by a
+        // frame and halves the scanout span.
+        compositor.refreshHz = display.refreshRate
+        watchRate(display, compositor)
+        // Latch pacing waits on frame timestamps that arrive a beat late;
+        // tuned at XREAL's 60 Hz it fits, but at 120 Hz without a display
+        // clock (RayNeo GT series, measured) it halved the frame rate.
+        autoPaceOnLatch = !(displayClock == null && presentation.refreshHz > 90f)
+        compositor.paceOnLatch = autoPaceOnLatch
+        autoPaceToGlasses = displayClock != null && !PhoneScreen.inStep(display.mode.refreshRate, PhoneScreen.rates(context))
+        compositor.paceToGlasses = autoPaceToGlasses
+        log("  pacing: ${if (autoPaceToGlasses) "the glasses' clock, out of step with the phone's screen" else if (autoPaceOnLatch) "each frame's latch" else "free"}")
     }
 
     /**
@@ -147,6 +192,38 @@ class GlassesStereoSession(
         log("  closed panel '${panel.id}'")
     }
 
+    /** Frames the compositor drew over the last second, or null before a second has passed. */
+    @Volatile
+    var renderFps: Double? = null
+        private set
+
+    private val meterHandler = Handler(Looper.getMainLooper())
+    private var meter: Runnable? = null
+
+    private fun meterFrames(compositor: StereoCompositor) {
+        stopMeter()
+        var frames = compositor.framesDrawn
+        var at = android.os.SystemClock.elapsedRealtime()
+        val tick = object : Runnable {
+            override fun run() {
+                val now = android.os.SystemClock.elapsedRealtime()
+                val drawn = compositor.framesDrawn
+                if (now > at) renderFps = (drawn - frames) * 1000.0 / (now - at)
+                frames = drawn
+                at = now
+                meterHandler.postDelayed(this, METER_INTERVAL_MS)
+            }
+        }
+        meter = tick
+        meterHandler.postDelayed(tick, METER_INTERVAL_MS)
+    }
+
+    private fun stopMeter() {
+        meter?.let { meterHandler.removeCallbacks(it) }
+        meter = null
+        renderFps = null
+    }
+
     private var rateListener: DisplayManager.DisplayListener? = null
 
     /** Follows the display if the system does switch its rate later. */
@@ -160,6 +237,7 @@ class GlassesStereoSession(
                 if (kotlin.math.abs(hz - compositor.refreshHz) > 1f) {
                     compositor.refreshHz = hz
                     log("  display ${displayId} now at ${"%.0f".format(hz)} Hz")
+                    onDisplayChanged?.invoke()
                 }
             }
             override fun onDisplayAdded(displayId: Int) = Unit
@@ -176,6 +254,7 @@ class GlassesStereoSession(
 
     fun dismiss() {
         unwatchRate()
+        stopMeter()
         // The presentation goes first: it stops the render thread, so nothing is
         // mid-draw against a texture we are about to release.
         presentation.dismiss()
@@ -193,6 +272,7 @@ class GlassesStereoSession(
     companion object {
         /** Leaves headroom at the edges, where these optics are least comfortable. */
         const val PANEL_VERTICAL_FILL = 0.75f
+        private const val METER_INTERVAL_MS = 1_000L
         private const val DEFAULT_PANEL_DISTANCE_M = 4f
     }
 }

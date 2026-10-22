@@ -32,6 +32,7 @@ class PointerPad(
     private val activity: Activity,
     listener: PadGestures.Listener,
     private val actions: Actions,
+    private val preview: View? = null,
 ) {
     interface Actions {
         fun recenterView()
@@ -40,6 +41,7 @@ class PointerPad(
         fun toggleRecording()
         fun nextPointerMode()
         fun toggleFollow()
+        fun stop()
     }
 
     private var view: View? = null
@@ -99,7 +101,8 @@ class PointerPad(
                 record = button("radio_button_checked", "Record") { actions.toggleRecording() }.also { addView(it) }
                 switchMode = button("swap_horiz", "Switch pointer mode") { actions.nextPointerMode() }.also { addView(it) }
                 follow = button("moving", "World lock or follow") { actions.toggleFollow() }.also { addView(it) }
-                addView(button("brightness_6", "Turn the phone screen off") { setScreenOff(true) })
+                if (preview == null) addView(button("brightness_6", "Turn the phone screen off") { setScreenOff(true) })
+                else addView(button("close", "Stop test mode") { actions.stop() })
             }
 
             val pad = object : FrameLayout(activity) {
@@ -148,6 +151,7 @@ class PointerPad(
                     addView(label, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
                 }
                 addView(centre, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+                preview?.let { addView(it, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP)) }
                 addView(bar, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP))
                 visibleParts += centre
                 visibleParts += bar
@@ -172,6 +176,13 @@ class PointerPad(
                 ViewCompat.setOnApplyWindowInsetsListener(this) { _, insets ->
                     val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
                     bar.setPadding(bars.left + dp(8), bars.top + dp(8), bars.right + dp(8), dp(8))
+                    preview?.let {
+                        val top = bars.top + dp(8 + 42 + 8)
+                        (it.layoutParams as FrameLayout.LayoutParams).topMargin = top
+                        val below = top + activity.resources.displayMetrics.widthPixels * 9 / 16
+                        (centre.layoutParams as FrameLayout.LayoutParams).topMargin = below / 2
+                        requestLayout()
+                    }
                     insets
                 }
             }
@@ -223,6 +234,7 @@ class PointerPad(
         modeIcon?.text = symbol
         modeLabel?.text = name
         recenterPointer?.visibility = if (mode == "phone") View.VISIBLE else View.GONE
+        switchMode?.visibility = if (preview == null) View.VISIBLE else View.GONE
         switchMode?.isEnabled = mode != "mouse"
         switchMode?.alpha = if (mode != "mouse") 1f else 0.3f
         record?.text = if (recording) "stop_circle" else "radio_button_checked"
@@ -290,6 +302,7 @@ class PointerPad(
             visibleParts.clear()
             wakeStrip = null
             view?.let { (it.parent as? ViewGroup)?.removeView(it) }
+            preview?.let { (it.parent as? ViewGroup)?.removeView(it) }
             view = null
             modeIcon = null
             modeLabel = null

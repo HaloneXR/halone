@@ -56,6 +56,7 @@ export class Bridge {
     shell.on('launcher', () => this.broadcast('launcher.changed', { open: shell.state.launcherOpen }))
     shell.on('browser', (id) => id && this.attachments.get(id)?.endpoint?.emit('browser.changed', shell.browserState(id)))
     shell.on('battery', () => shell.state.battery && this.broadcast('system.batteryChanged', { ...shell.state.battery }))
+    shell.on('display', () => this.broadcast('display.changed', shell.displayState()))
     shell.on('file', (id) => {
       const path = id && shell.find(id).openedFile
       if (path) this.attachments.get(id)?.endpoint?.emit('window.fileOpened', { path })
@@ -171,6 +172,11 @@ export class Bridge {
         if (!shell.state.battery) throw new HaloneError('unavailable', 'battery level is not known')
         return { ...shell.state.battery }
       },
+      'system.shareLog': () => {
+        throw new HaloneError('unavailable', 'the simulator keeps no log')
+      },
+      'display.state': () => shell.displayState(),
+      'display.restart': () => undefined,
       'screen.capture': () => {
         throw new HaloneError('unavailable', 'the simulator cannot capture what the glasses show')
       },
@@ -240,6 +246,12 @@ export class Bridge {
         throw new HaloneError('no-such-item', `status items come from plugins; the simulator has none: ${id}`)
       },
       'plugins.setEnabled': ({ packageName }) => {
+        throw new HaloneError('no-such-plugin', `plugins are Android apps; the simulator has none: ${packageName}`)
+      },
+      'plugins.settings': ({ packageName }) => {
+        throw new HaloneError('no-such-plugin', `plugins are Android apps; the simulator has none: ${packageName}`)
+      },
+      'plugins.setSetting': ({ packageName }) => {
         throw new HaloneError('no-such-plugin', `plugins are Android apps; the simulator has none: ${packageName}`)
       },
       'apps.open': async ({ path, appId }) => {

@@ -2,6 +2,7 @@ package dev.halone.display
 
 import android.content.Context
 import android.hardware.display.DisplayManager
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.Display
@@ -9,6 +10,7 @@ import dev.halone.glasses.api.DisplayMode
 import dev.halone.glasses.api.GlassesDevice
 import dev.halone.glasses.api.preferredMonoMode
 import dev.halone.glasses.api.preferredStereoMode
+import dev.halone.glasses.api.sameSignalAs
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
@@ -41,7 +43,7 @@ class GlassesDisplaySession(
         }
 
         val current = control.currentMode().getOrNull()
-        if (current?.key == stereo.key) {
+        if (current != null && (current.key == stereo.key || control.rateChosenByHost && current.sameSignalAs(stereo))) {
             log("  already in ${current.key}; reusing the current display")
             return findGlassesDisplay(device)
         }
@@ -54,7 +56,7 @@ class GlassesDisplaySession(
             return null
         }
 
-        val added = awaitNewPresentationDisplay(before)
+        val added = awaitNewPresentationDisplay(device, before)
         if (added == null) {
             log("  no new display arrived after the mode switch")
             return null
@@ -94,20 +96,38 @@ class GlassesDisplaySession(
         return display
     }
 
-    fun findGlassesDisplay(device: GlassesDevice): Display? {
-        val candidates = displayManager.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION)
-        return candidates.firstOrNull { display ->
-            device.displayNameHints.any { display.name.contains(it, ignoreCase = true) }
-        } ?: candidates.firstOrNull()
+    /**
+     * The glasses' display other than [notId]: one already there, or the
+     * next to arrive within [timeoutMs]. Null if none comes.
+     */
+    suspend fun awaitGlassesDisplay(device: GlassesDevice, notId: Int?, timeoutMs: Long): Display? {
+        val accept = { display: Display -> display.displayId != notId && display.isValid && isGlasses(display, device) }
+        displayManager.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION).firstOrNull(accept)?.let { return it }
+        return awaitDisplay(timeoutMs, accept)
     }
+
+    fun findGlassesDisplay(device: GlassesDevice): Display? {
+        val candidates = displayManager.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION).filter(::isPublic)
+        return candidates.firstOrNull { display -> named(display, device) } ?: candidates.firstOrNull()
+    }
+
+    /** Halone's own windows each have a private virtual display, which is never the glasses'. */
+    private fun isPublic(display: Display) = display.flags and Display.FLAG_PRIVATE == 0
+
+    private fun named(display: Display, device: GlassesDevice) =
+        device.displayNameHints.any { display.name.contains(it, ignoreCase = true) }
+
+    /** Plugged in rather than made by an app: the glasses by name, or failing that any external screen. */
+    private fun isGlasses(display: Display, device: GlassesDevice) =
+        isPublic(display) && (named(display, device) || Build.VERSION.SDK_INT >= 31 && display.deviceProductInfo != null)
 
     /**
      * Waits for a presentation display whose id differs from the one we had.
      * The mode switch tears the old one down, so watching for *any* add would
      * race with the removal of the display we were just using.
      */
-    private suspend fun awaitNewPresentationDisplay(previousId: Int?): Display? =
-        awaitDisplay(DISPLAY_SETTLE_MS) { it.displayId != previousId }
+    private suspend fun awaitNewPresentationDisplay(device: GlassesDevice, previousId: Int?): Display? =
+        awaitDisplay(DISPLAY_SETTLE_MS) { it.displayId != previousId && isGlasses(it, device) }
 
     /**
      * Waits up to [timeoutMs] for a presentation display, added or changed,

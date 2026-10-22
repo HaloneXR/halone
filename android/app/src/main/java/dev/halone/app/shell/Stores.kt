@@ -3,6 +3,9 @@ package dev.halone.app.shell
 import android.content.Context
 import dev.halone.shell.SettingsStore
 
+/** Each plugin's settings, shared by the environment's shell and the phone's. */
+internal const val PLUGIN_SETTINGS = "plugin-settings.json"
+
 /** A JSON file in the app's own storage, written on [writer] so the UI thread never waits on the disk. */
 internal class FileStore(context: Context, name: String, private val writer: java.util.concurrent.Executor) : SettingsStore {
     private val file = java.io.File(context.filesDir, name)
