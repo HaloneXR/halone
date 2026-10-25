@@ -49,8 +49,9 @@ class XrSessionService : Service() {
             .build()
 
         val projecting = intent?.getBooleanExtra(EXTRA_PROJECTION, false) == true
+        val device = intent?.getBooleanExtra(EXTRA_DEVICE, !withoutDevice) ?: !withoutDevice
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            val types = (if (withoutDevice) 0 else ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE) or
+            val types = (if (device) ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE else 0) or
                 (if (projecting) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION else 0)
             startForeground(NOTIFICATION_ID, notification, types)
         } else {
@@ -67,6 +68,7 @@ class XrSessionService : Service() {
         private const val CHANNEL = "xr-session"
         private const val NOTIFICATION_ID = 1
         private const val EXTRA_PROJECTION = "projection"
+        private const val EXTRA_DEVICE = "device"
 
         /** Run when the wearer swipes the app away, to give the glasses back as they were. */
         var onTaskRemoved: (() -> Unit)? = null
@@ -76,11 +78,15 @@ class XrSessionService : Service() {
 
         /**
          * Re-declares the service so that a screen recording may capture
-         * sound, after the wearer consented; [ready] runs on the main thread.
+         * sound, or picture in picture mirror the screen, after the wearer
+         * consented; [ready] runs on the main thread. Without [withDevice],
+         * for glasses Halone has no USB access to, it is a projection only.
          */
-        fun allowProjection(context: Context, ready: () -> Unit) {
+        fun allowProjection(context: Context, withDevice: Boolean = !withoutDevice, ready: () -> Unit) {
             projectionReady = ready
-            context.startForegroundService(Intent(context, XrSessionService::class.java).putExtra(EXTRA_PROJECTION, true))
+            context.startForegroundService(
+                Intent(context, XrSessionService::class.java).putExtra(EXTRA_PROJECTION, true).putExtra(EXTRA_DEVICE, withDevice)
+            )
         }
 
         /**

@@ -57,6 +57,9 @@ import dev.halone.app.pointer.CursorInput
 import dev.halone.app.pointer.PadGestures
 import dev.halone.app.pointer.PhonePointer
 import dev.halone.app.pointer.feed
+import dev.halone.app.pip.PictureInPicture
+import dev.halone.app.pip.PipControls
+import dev.halone.app.pip.PipFrame
 import dev.halone.app.session.XrSessionService
 import dev.halone.app.shell.BedModeController
 import dev.halone.app.shell.KeyCaptureService
@@ -101,7 +104,14 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         home = HomeScreen(
             this,
+            pipMode = getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(PIP_MODE, false),
             onPrimary = ::onPrimary,
+            onStartPip = ::requestPip,
+            onModeChanged = { pipMode ->
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(PIP_MODE, pipMode).apply()
+                pipNotice = null
+                refreshHome()
+            },
             onSettings = ::openSettings,
             onShareReport = ::shareCrashReport,
             onDismissReport = ::dismissCrashReport,
@@ -263,6 +273,10 @@ class MainActivity : AppCompatActivity() {
     private fun refreshHome() {
         if (!::home.isInitialized) return
         val (status, model) = glassesStatus()
+        if (home.pipMode && status != GlassesStatus.STARTING && status != GlassesStatus.RUNNING) {
+            home.renderPip(DisplayProbe.externalDisplay(this) != null, pipNotice)
+            return
+        }
         val setup = connection.findSupported()?.second?.match?.setup
         val offerLink = setup != null && connectFailedAt > 0 && status != GlassesStatus.LINK_OFF && tracker == null
         home.testModeUnlocked = savedSettings().boolean(ShellSettings.TEST_MODE_ENABLED)
@@ -745,6 +759,95 @@ class MainActivity : AppCompatActivity() {
         }.onFailure { logLine("  could not come back: ${it.message}") }
     }
 
+    private var pip: PictureInPicture? = null
+
+    private var pipControls: PipControls? = null
+
+    /** Why picture in picture last failed to start, for the home screen. */
+    private var pipNotice: String? = null
+
+    private val pipConsent = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) { result ->
+        val data = result.data
+        if (result.resultCode != RESULT_OK || data == null) {
+            logLine("  pip: screen sharing refused")
+            return@registerForActivityResult
+        }
+        XrSessionService.allowProjection(this, withDevice = tracker != null) {
+            val manager = getSystemService(android.media.projection.MediaProjectionManager::class.java)
+            val projection = runCatching { manager.getMediaProjection(result.resultCode, data) }
+                .onFailure { logLine("  pip: no projection: $it") }
+                .getOrNull()
+            if (projection == null) {
+                pipNotice = "Couldn't share the screen"
+                pipEnded()
+            } else {
+                startPip(projection)
+            }
+        }
+    }
+
+    /**
+     * Picture in picture asks for the whole screen, the one choice offered:
+     * a single app would leave the window black whenever another is in front.
+     */
+    private fun requestPip() {
+        if (pip != null || shellSession != null || starting != null) return
+        logLine("▶ starting picture in picture")
+        val manager = getSystemService(android.media.projection.MediaProjectionManager::class.java)
+        pipConsent.launch(
+            if (android.os.Build.VERSION.SDK_INT >= 34) {
+                manager.createScreenCaptureIntent(android.media.projection.MediaProjectionConfig.createConfigForDefaultDisplay())
+            } else {
+                manager.createScreenCaptureIntent()
+            }
+        )
+    }
+
+    private fun startPip(projection: android.media.projection.MediaProjection) {
+        val display = DisplayProbe.externalDisplay(this)
+        if (display == null) {
+            projection.stop()
+            pipNotice = "The display went away before picture in picture could start"
+            pipEnded()
+            return
+        }
+        pipNotice = null
+        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        val session = runCatching { PictureInPicture(this, projection, display, PipFrame.load(prefs), ::pipEnded, ::logOnMain) }
+            .onFailure { logLine("  pip: could not start: $it") }
+            .getOrNull()
+        if (session == null) {
+            runCatching { projection.stop() }
+            pipNotice = "Couldn't show the window on the display"
+            pipEnded()
+            return
+        }
+        pip = session
+        val mode = display.mode
+        pipControls = PipControls(
+            this,
+            mode.physicalWidth,
+            mode.physicalHeight,
+            session.frame,
+            onChange = { session.frame = it },
+            onSettled = { it.save(prefs) },
+            onStop = { session.stop() },
+        ).also {
+            it.setContent(session.contentWidth, session.contentHeight)
+            it.show()
+        }
+        session.onResized = { pipControls?.setContent(session.contentWidth, session.contentHeight) }
+    }
+
+    private fun pipEnded() {
+        if (pip != null) logLine("picture in picture ended")
+        pip = null
+        pipControls?.hide()
+        pipControls = null
+        if (tracker != null) XrSessionService.start(this) else XrSessionService.stop(this)
+        refreshHome()
+    }
+
     private var projectionResult: ((android.media.projection.MediaProjection?) -> Unit)? = null
 
     private var permissionsResult: ((Set<String>) -> Unit)? = null
@@ -819,6 +922,7 @@ class MainActivity : AppCompatActivity() {
         lifecycle("destroyed" + if (isChangingConfigurations) " for a configuration change" else "")
         super.onDestroy()
         XrSessionService.onTaskRemoved = null
+        pip?.stop()
         releaseGlasses()
         stopPhonePointer()
         XrSessionService.stop(this)
@@ -2724,6 +2828,7 @@ class MainActivity : AppCompatActivity() {
 
     private companion object {
         const val PREFS = "home"
+        const val PIP_MODE = "pip-mode"
         const val LOG_TAG = "Halone"
 
         /** What Nebula reads from an Air 2 Pro, for comparison against ours. */
