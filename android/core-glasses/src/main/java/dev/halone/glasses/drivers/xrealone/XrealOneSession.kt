@@ -12,6 +12,7 @@ import dev.halone.glasses.api.DisplayMode
 import dev.halone.glasses.api.GlassesDevice
 import dev.halone.glasses.api.Optics
 import dev.halone.glasses.api.TrackingSink
+import dev.halone.glasses.math.Vec3
 import dev.halone.glasses.api.TrackingSource
 import dev.halone.glasses.drivers.xreal.XrealCalibrationParser
 import dev.halone.glasses.transport.HidTransport
@@ -87,6 +88,7 @@ internal class XrealOneSession(
         private var running = false
         private var thread: Thread? = null
         private val framer = XrealOneFramer(MAX_REPORT_PAYLOAD)
+        private var pendingMagnet: Vec3? = null
 
         override fun start(sink: TrackingSink) {
             this.sink = sink
@@ -132,8 +134,15 @@ internal class XrealOneSession(
 
         private fun onMessage(magic: Int, data: ByteArray, offset: Int, length: Int) {
             if (magic != XrealOneProtocol.MSG_REPORT || length != XrealOneReport.SIZE) return
+            XrealOneReport.magnet(data, offset, axes)?.let {
+                pendingMagnet = it
+                return
+            }
             val target = sink ?: return
-            XrealOneReport.inertial(data, offset, axes)?.let(target::onSample)
+            XrealOneReport.inertial(data, offset, axes, pendingMagnet)?.let {
+                pendingMagnet = null
+                target.onSample(it)
+            }
         }
     }
 
@@ -142,6 +151,8 @@ internal class XrealOneSession(
         override val supportedModes = model.modes
 
         override val modeChangeRecreatesDisplay = true
+
+        override val rateChosenByHost = true
 
         override fun currentMode(): Result<DisplayMode> =
             channel.request(XrealOneProtocol.MSG_GET_INPUT_MODE, XrealOneProtocol.getBody())

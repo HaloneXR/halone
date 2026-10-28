@@ -3,6 +3,9 @@ package dev.halone.glasses.drivers.xrealone
 import dev.halone.glasses.api.DeviceCalibration
 import dev.halone.glasses.api.DeviceEvent
 import dev.halone.glasses.api.GlassesDevice
+import dev.halone.glasses.api.RefreshRate
+import dev.halone.glasses.api.modeFor
+import dev.halone.glasses.api.refreshRates
 import dev.halone.glasses.api.StereoLayout
 import dev.halone.glasses.api.TrackingSample
 import dev.halone.glasses.api.UsbIdentity
@@ -93,6 +96,27 @@ class XrealOneSessionTest {
     }
 
     @Test
+    fun `each magnetometer report rides on the next imu sample`() {
+        val stream = XrealOneCaptures.REPORTS
+        val reports = GatedTransport(stream.toList().chunked(1000).map { it.toByteArray() }, endOfStream = true)
+        val samples = CopyOnWriteArrayList<TrackingSample.Inertial>()
+        val gone = CountDownLatch(1)
+
+        connect(reports, control = null).use { device ->
+            device.addEventListener { if (it is DeviceEvent.Disconnected) gone.countDown() }
+            device.tracking.start { samples += it as TrackingSample.Inertial }
+            reports.open()
+            assertTrue("stream end was not reported", gone.await(5, TimeUnit.SECONDS))
+        }
+
+        val magnets = XrealOneCaptures.messages(stream)
+            .count { (_, body) -> XrealOneReport.type(body, 0) == XrealOneReport.TYPE_MAGNETOMETER }
+        val carried = samples.mapNotNull { it.magnetRaw }
+        assertTrue("${carried.size} of $magnets", carried.size >= magnets - 2)
+        carried.forEach { assertEquals(39.6f, it.length, 1.5f) }
+    }
+
+    @Test
     fun `calibration is read from the config and keeps the mounting angle`() {
         val config = XrealOneCaptures.reply(
             XrealOneProtocol.MSG_GET_CONFIG, 1, XrealOneCaptures.stringReplyBody(XrealOneCaptures.CONFIG_JSON),
@@ -162,7 +186,20 @@ class XrealOneSessionTest {
 
         connect(GatedTransport(), control).use { device ->
             control.open()
-            assertEquals("sbs", device.display!!.currentMode().getOrThrow().key)
+            assertEquals("sbs-60", device.display!!.currentMode().getOrThrow().key)
+        }
+    }
+
+    @Test
+    fun `2D offers every rate the glasses take and 3D only 60`() {
+        connect(GatedTransport(), GatedTransport()).use { device ->
+            val display = device.display!!
+            assertTrue(display.rateChosenByHost)
+            assertEquals(
+                listOf(RefreshRate(60, true), RefreshRate(90, false), RefreshRate(120, false)),
+                display.refreshRates(),
+            )
+            assertEquals("mono-120", display.modeFor(120, stereo = true)?.key)
         }
     }
 

@@ -5,6 +5,8 @@ import {
   type Battery,
   type BrowserState,
   type ClipboardFiles,
+  type DisplayRate,
+  type DisplayState,
   type MenuItem,
   type ResizeAnchor,
   type StereoRegion,
@@ -109,7 +111,27 @@ export interface SimMenu {
   shown: boolean
 }
 
-type ShellEvent = 'windows' | 'settings' | 'focus' | 'launcher' | 'battery' | 'browser' | 'file' | 'closed' | 'routed' | 'menu' | 'apps'
+type ShellEvent =
+  | 'windows'
+  | 'settings'
+  | 'focus'
+  | 'launcher'
+  | 'battery'
+  | 'display'
+  | 'browser'
+  | 'file'
+  | 'closed'
+  | 'routed'
+  | 'menu'
+  | 'apps'
+
+/** What an Air 2 Pro offers. */
+const DISPLAY_RATES: DisplayRate[] = [
+  { hz: 60, stereo: true, matchesPhone: true },
+  { hz: 72, stereo: true, matchesPhone: false },
+  { hz: 90, stereo: true, matchesPhone: false },
+  { hz: 120, stereo: false, matchesPhone: true },
+]
 
 /** The browser page's rows, as on the glasses: the toolbar, then the tab row. */
 const TOOLBAR_PX = 76
@@ -754,6 +776,21 @@ export class Shell {
     }
     this.applySettings()
     this.emit('settings')
+    if (key === 'display.refreshRate' || key === 'display.stereo') this.emit('display')
+  }
+
+  /** The simulated glasses run whatever the settings ask for, falling back as the device does. */
+  displayState(): DisplayState {
+    const settings = this.state.settings
+    const rate = DISPLAY_RATES.find((r) => r.hz === settings['display.refreshRate']) ?? DISPLAY_RATES[0]
+    return {
+      running: true,
+      stereo: rate.stereo && settings['display.stereo'],
+      refreshHz: rate.hz,
+      renderFps: rate.hz,
+      rates: DISPLAY_RATES.map((r) => ({ ...r })),
+      restartNeeded: false,
+    }
   }
 
   private applySettings() {

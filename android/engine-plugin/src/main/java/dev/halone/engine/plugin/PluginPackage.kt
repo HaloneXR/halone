@@ -15,6 +15,8 @@ data class PluginPackage(
     val certificate: String,
     /** When it was last installed or updated, so a reinstall of the same version still counts as a change. */
     val updatedAt: Long = 0,
+    /** The settings list its meta-data points at, as JSON text; null for none. */
+    val settingsSchema: String? = null,
 ) {
     val compatible: Boolean get() = contract in 1..PluginContract.VERSION
 }

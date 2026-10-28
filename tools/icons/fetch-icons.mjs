@@ -42,7 +42,7 @@ const SYMBOLS = [
   'pause', 'photo_camera', 'play_arrow', 'radio_button_checked', 'refresh', 'remove', 'replay_10', 'search',
   'select_window', 'settings', 'smartphone', 'star', 'stop', 'stop_circle', 'swap_horiz', 'touch_app',
   'trackpad_input', 'usb', 'view_list', 'visibility', 'web_asset', 'zoom_in', 'zoom_out', 'all_out', 'moving',
-  'link_off', 'folder', 'lock', 'arrow_forward', 'videocam', 'screen_rotation_alt', 'ads_click',
+  'link_off', 'folder', 'lock', 'arrow_forward', 'videocam', 'screen_rotation_alt', 'ads_click', 'picture_in_picture',
 ]
 
 async function fetchText(url) {
@@ -92,4 +92,4 @@ const ttf = css.match(/src: url\((.+?)\) format\('truetype'\)/)?.[1]
 if (!ttf) throw new Error(`no font in:\n${css}`)
 const font = await fetchBytes(ttf)
 await write(join(root, 'web', 'packages', 'ui', 'src', 'symbols.ttf'), font)
-await write(join(root, 'android', 'spike', 'src', 'main', 'res', 'font', 'symbols.ttf'), font)
+await write(join(root, 'android', 'app', 'src', 'main', 'res', 'font', 'symbols.ttf'), font)

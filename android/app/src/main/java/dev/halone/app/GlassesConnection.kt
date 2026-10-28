@@ -94,6 +94,11 @@ class GlassesConnection(
             }
     }
 
+    fun standIn(device: GlassesDevice) {
+        close()
+        this.device = device
+    }
+
     private fun transportsFor(usbDevice: UsbDevice, probe: ProbeResult): Result<HidTransportProvider> {
         val network = probe.match.transports.network
         if (network != null && network.hosts.any { linkLocal.networkFor(it) != null }) {

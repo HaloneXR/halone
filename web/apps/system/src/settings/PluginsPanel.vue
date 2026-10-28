@@ -1,10 +1,14 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref } from 'vue'
 import { useHalone, type PluginInfo } from '@halone/sdk'
+import Icon from '../shared/Icon.vue'
+import PluginSettingsPage from './PluginSettingsPage.vue'
 
 const halone = useHalone()
 const plugins = ref<PluginInfo[] | null>(null)
 const failure = ref<string | null>(null)
+/** The plugin whose settings are open in place of the list. */
+const opened = ref<PluginInfo | null>(null)
 
 halone.plugins.list().then(
   (list) => (plugins.value = list),
@@ -32,7 +36,8 @@ function setEnabled(plugin: PluginInfo, enabled: boolean) {
 </script>
 
 <template>
-  <div class="plugins">
+  <PluginSettingsPage v-if="opened" :plugin="opened" @back="opened = null" />
+  <div v-else class="plugins">
     <p class="x-muted">
       Plugins are Android apps that add their own apps to Halone, drawn by the plugin itself. Install one on the phone and it appears here,
       off until you turn it on. A plugin runs with the permissions Android gave it, so turn on only those you trust.
@@ -45,6 +50,9 @@ function setEnabled(plugin: PluginInfo, enabled: boolean) {
         <span class="help x-muted">{{ describe(plugin) }}</span>
         <span class="help x-muted package">{{ plugin.packageName }}</span>
       </span>
+      <button v-if="plugin.hasSettings" class="settings" :aria-label="`${plugin.label} settings`" @click="opened = plugin">
+        <Icon name="settings" />
+      </button>
       <input
         type="checkbox"
         class="switch"
@@ -89,6 +97,18 @@ function setEnabled(plugin: PluginInfo, enabled: boolean) {
 }
 .failure {
   color: var(--danger);
+}
+.settings {
+  display: flex;
+  padding: 8px;
+  border: 0;
+  border-radius: var(--radius-small);
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+.settings:hover {
+  background: var(--surface-hover);
 }
 .switch {
   width: 36px;

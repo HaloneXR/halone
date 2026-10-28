@@ -288,10 +288,19 @@ class HeadTracker(
      * safe to zero; pitch and roll are anchored to gravity and should be left
      * exactly where the filter puts them.
      *
-     * Returns the yaw by which the world frame turned, for anything else that
-     * points in world coordinates and has to turn with it.
+     * In bed mode there is no horizon to keep, so the whole pose becomes
+     * forward and upright, roll included.
+     *
+     * Returns the rotation by which the world frame turned, for anything else
+     * that points in world coordinates and has to turn with it.
      */
-    fun recenter(): Quaternion = reframe(bedFrame)
+    fun recenter(): Quaternion {
+        if (bedFrame == null) return reframe(null)
+        val previous = worldReference
+        worldReference = currentGravityOrientation().conjugate()
+        holdReset = true
+        return (worldReference * previous.conjugate()).normalized()
+    }
 
     /**
      * Turns the world so the direction the wearer faces lying on their back
@@ -304,11 +313,20 @@ class HeadTracker(
      *
      * Returns the world turn, as [recenter] does.
      */
-    fun enterBedMode(forwardElevationDegrees: Float = 90f): Quaternion =
-        reframe(lyingFrame(currentGravityOrientation(), forwardElevationDegrees).conjugate())
+    fun enterBedMode(forwardElevationDegrees: Float = 90f): Quaternion {
+        // The measured field's error depends on head pose, so **[suspected]** a
+        // reference learned upright rejects every reading taken lying down and
+        // leaves the image to roll with gyro drift. Lying still holds one pose,
+        // which is when a fresh reference works best.
+        filter.magnetometer.reanchor()
+        return reframe(lyingFrame(currentGravityOrientation(), forwardElevationDegrees).conjugate())
+    }
 
     /** Back to gravity, recentred on the current heading. Returns the world turn. */
-    fun exitBedMode(): Quaternion = reframe(null)
+    fun exitBedMode(): Quaternion {
+        filter.magnetometer.reanchor()
+        return reframe(null)
+    }
 
     private fun currentGravityOrientation() = (filter.orientation * mountingCorrection).normalized()
 

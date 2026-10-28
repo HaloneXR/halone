@@ -95,8 +95,13 @@ documents +X left/+Y up/+Z back, and one Rust driver remaps to `(−x, −z, −
 the measurement settles it for this unit.
 
 The 1S also found the factory `gyro_bias` doesn't match the live offset, and
-the magnetometer unusable without a calibration the glasses don't store. The
-driver leaves the magnetometer out.
+the magnetometer unusable without a calibration the glasses don't store. On a
+still One Pro the magnetometer reads a steady ~40 (±1%), the size of Earth's
+field in µT, at a believable dip angle against gravity, which suggests it
+shares the IMU's axes. Halone's heading correction needs no calibration, only
+a field that stays put, so the driver hands each magnetometer report to the
+filter with the IMU sample after it, rotated by the factory `gyro_q_mag`.
+Whether it holds the heading while worn is not yet confirmed.
 
 ## Control (52999)
 

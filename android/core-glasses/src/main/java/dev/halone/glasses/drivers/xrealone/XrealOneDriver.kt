@@ -122,17 +122,18 @@ class XrealOneDriver : GlassesDriver {
         )
 
         val INPUT_MODES = mapOf(
-            "mono" to XrealOneProtocol.INPUT_MODE_MONO,
-            "sbs" to XrealOneProtocol.INPUT_MODE_SBS,
+            "mono-60" to XrealOneProtocol.INPUT_MODE_MONO,
+            "mono-90" to XrealOneProtocol.INPUT_MODE_MONO,
+            "mono-120" to XrealOneProtocol.INPUT_MODE_MONO,
+            "sbs-60" to XrealOneProtocol.INPUT_MODE_SBS,
         )
 
-        /**
-         * The refresh rate is picked in the glasses' own menu and cannot be set
-         * from here, so each layout is listed once at the rate the 1S used.
-         */
+        /** The rates a One Pro's EDID offers; 3D is 60 Hz only. */
         private val MODES = listOf(
-            DisplayMode("mono", StereoLayout.MONO, 1920, 1080, 60f),
-            DisplayMode("sbs", StereoLayout.FULL_SBS, 3840, 1080, 60f),
+            DisplayMode("mono-60", StereoLayout.MONO, 1920, 1080, 60f),
+            DisplayMode("mono-90", StereoLayout.MONO, 1920, 1080, 90f),
+            DisplayMode("mono-120", StereoLayout.MONO, 1920, 1080, 120f),
+            DisplayMode("sbs-60", StereoLayout.FULL_SBS, 3840, 1080, 60f),
         )
 
         /** Spec-sheet field of view; the factory calibration replaces it when readable. */
