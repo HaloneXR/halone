@@ -175,7 +175,7 @@ class RenderThread(
             return fail("no EGL config")
         }
         eglConfig = configs[0]!!
-        eglContext = EGL14.eglCreateContext(
+        eglContext = createHighPriorityContext() ?: EGL14.eglCreateContext(
             eglDisplay, eglConfig, EGL14.EGL_NO_CONTEXT, intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 3, EGL14.EGL_NONE), 0,
         )
         if (eglContext == EGL14.EGL_NO_CONTEXT) return fail("no GL context")
@@ -185,6 +185,30 @@ class RenderThread(
         if (idleSurface == EGL14.EGL_NO_SURFACE) return fail("no pbuffer")
         if (!EGL14.eglMakeCurrent(eglDisplay, idleSurface, idleSurface, eglContext)) return fail("context not current")
         return true
+    }
+
+    /**
+     * A context the GPU serves ahead of other apps' work. Without it, a plugin
+     * or app keeping the GPU busy starves the compositor: a depth model
+     * running beside it took the glasses from 90 fps to under 20.
+     */
+    private fun createHighPriorityContext(): EGLContext? {
+        val extensions = EGL14.eglQueryString(eglDisplay, EGL14.EGL_EXTENSIONS).orEmpty().split(' ')
+        if ("EGL_IMG_context_priority" !in extensions) {
+            log("  render: no context priority on this GPU")
+            return null
+        }
+        val context = EGL14.eglCreateContext(
+            eglDisplay, eglConfig, EGL14.EGL_NO_CONTEXT,
+            intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 3, CONTEXT_PRIORITY_LEVEL, CONTEXT_PRIORITY_HIGH, EGL14.EGL_NONE), 0,
+        )
+        if (context == EGL14.EGL_NO_CONTEXT) {
+            log("  render: a high-priority context was refused (0x%x)".format(EGL14.eglGetError()))
+            return null
+        }
+        val granted = IntArray(1).also { EGL14.eglQueryContext(eglDisplay, context, CONTEXT_PRIORITY_LEVEL, it, 0) }[0]
+        log("  render: context priority ${if (granted == CONTEXT_PRIORITY_HIGH) "high" else "0x%x".format(granted)}")
+        return context
     }
 
     private fun destroyContext() {
@@ -202,6 +226,8 @@ class RenderThread(
     }
 
     private companion object {
+        const val CONTEXT_PRIORITY_LEVEL = 0x3100
+        const val CONTEXT_PRIORITY_HIGH = 0x3101
         const val RELEASE_TIMEOUT_MS = 2_000L
         const val STOP_TIMEOUT_MS = 2_000L
     }
