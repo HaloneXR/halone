@@ -16,6 +16,7 @@ import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoRuntimeSettings
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoSessionSettings
+import org.mozilla.geckoview.MediaSession
 import org.mozilla.geckoview.PanZoomController
 import org.mozilla.geckoview.ScreenLength
 import org.mozilla.geckoview.WebExtension
@@ -58,7 +59,7 @@ class GeckoPanel(
     fun setDesktopUserAgent(desktop: Boolean) {
         if (desktop == desktopUserAgent) return
         desktopUserAgent = desktop
-        tabs.forEach {
+        tabs.filter { !it.suspended }.forEach {
             it.session.settings.userAgentMode = userAgentMode()
             if (it.url != null) it.session.reload()
         }
@@ -73,8 +74,14 @@ class GeckoPanel(
     private val runtime: GeckoRuntime = sharedRuntime(context)
     private val extensions = GeckoExtensions.of(runtime, log)
 
-    /** One page and its history; only the active tab's session holds the display. */
-    class Tab(val id: Int, val session: GeckoSession, val private: Boolean) {
+    /**
+     * One page and its history; only the active tab's session holds the
+     * display. A background tab may be [suspended]: its session is closed to
+     * free its memory, and a new one restores [sessionState] when it is selected.
+     */
+    class Tab(val id: Int, val private: Boolean) {
+        lateinit var session: GeckoSession
+            internal set
         @Volatile var url: String? = null
         @Volatile var title: String = ""
         @Volatile var canGoBack = false
@@ -93,6 +100,20 @@ class GeckoPanel(
 
         /** Permissions the tab's page asked for, oldest first; the chrome shows the first. */
         val prompts = ArrayDeque<PermissionPrompt>()
+
+        /** Where the page was, history included, as Gecko last reported it. */
+        internal var sessionState: GeckoSession.SessionState? = null
+
+        var suspended = false
+            internal set
+
+        /** When the tab last had the display, or was opened; elapsed realtime. */
+        var lastSeenAt = SystemClock.elapsedRealtime()
+            internal set
+
+        /** Playing sound or video, or using the camera or microphone: not to be put to sleep. */
+        @Volatile var playing = false
+        @Volatile var capturing = false
     }
 
     /** A permission a page asked for; [kind] is the protocol's `PermissionKind`. */
@@ -197,9 +218,15 @@ class GeckoPanel(
 
     /** Opens a tab's session at once, or leaves that to Gecko when it asked for the tab. */
     private fun openTab(private: Boolean, open: Boolean = true): Tab {
-        val settings = GeckoSessionSettings.Builder().usePrivateMode(private).displayMode(displayMode).build()
-        val tab = Tab(nextTab++, GeckoSession(settings), private)
-        val session = tab.session
+        val tab = Tab(nextTab++, private)
+        tab.session = newSession(tab)
+        if (open) tab.session.open(runtime)
+        return tab
+    }
+
+    private fun newSession(tab: Tab): GeckoSession {
+        val settings = GeckoSessionSettings.Builder().usePrivateMode(tab.private).displayMode(displayMode).build()
+        val session = GeckoSession(settings)
         session.settings.userAgentMode = userAgentMode()
         session.navigationDelegate = object : GeckoSession.NavigationDelegate {
             override fun onLocationChange(
@@ -248,6 +275,34 @@ class GeckoPanel(
                 if (tab === active) pageLoaded = success
                 log("  gecko: tab ${tab.id} page stop (success=$success)")
                 onChange?.invoke()
+            }
+
+            override fun onSessionStateChange(session: GeckoSession, sessionState: GeckoSession.SessionState) {
+                tab.sessionState = sessionState
+            }
+        }
+
+        session.mediaSessionDelegate = object : MediaSession.Delegate {
+            override fun onPlay(session: GeckoSession, mediaSession: MediaSession) {
+                tab.playing = true
+            }
+
+            override fun onPause(session: GeckoSession, mediaSession: MediaSession) {
+                tab.playing = false
+            }
+
+            override fun onStop(session: GeckoSession, mediaSession: MediaSession) {
+                tab.playing = false
+            }
+
+            override fun onDeactivated(session: GeckoSession, mediaSession: MediaSession) {
+                tab.playing = false
+            }
+        }
+
+        session.mediaDelegate = object : GeckoSession.MediaDelegate {
+            override fun onRecordingStatusChanged(session: GeckoSession, devices: Array<GeckoSession.MediaDelegate.RecordingDevice>) {
+                tab.capturing = devices.isNotEmpty()
             }
         }
 
@@ -321,8 +376,7 @@ class GeckoPanel(
         }
         session.promptDelegate = promptDelegate
         extensions.attach(session, helperDelegate(tab))
-        if (open) session.open(runtime)
-        return tab
+        return session
     }
 
     /**
@@ -489,7 +543,10 @@ class GeckoPanel(
      * receives blank frames; the tab giving the display up is backgrounded.
      */
     private fun bind(tab: Tab) {
+        val now = SystemClock.elapsedRealtime()
+        tab.lastSeenAt = now
         displayTab?.takeIf { it !== tab }?.let { previous ->
+            previous.lastSeenAt = now
             display?.let {
                 it.surfaceDestroyed()
                 previous.session.releaseDisplay(it)
@@ -528,6 +585,7 @@ class GeckoPanel(
 
     fun select(tab: Tab) {
         if (tab !in tabs) return
+        wake(tab)
         active = tab
         lastLocation = tab.url
         bind(tab)
@@ -540,12 +598,44 @@ class GeckoPanel(
         val index = tabs.indexOf(tab)
         tabs.remove(tab)
         if (tab === active) select(tabs[minOf(index, tabs.lastIndex)])
+        closeSession(tab)
+        onChange?.invoke()
+        return true
+    }
+
+    /** The tabs other than the active one whose pages are still loaded. */
+    fun backgroundTabs(): List<Tab> = tabs.filter { it !== active && !it.suspended }
+
+    /** Puts a background tab to sleep, closing its page; selecting it brings the page back where it was. */
+    fun suspend(tab: Tab): Boolean {
+        if (tab === active || tab.suspended || tab !in tabs) return false
+        log("  gecko: tab ${tab.id} put to sleep after ${(SystemClock.elapsedRealtime() - tab.lastSeenAt) / 1000} s unseen")
+        closeSession(tab)
+        tab.suspended = true
+        tab.loading = false
+        tab.playing = false
+        tab.capturing = false
+        tab.port = null
+        onChange?.invoke()
+        return true
+    }
+
+    private fun wake(tab: Tab) {
+        if (!tab.suspended) return
+        log("  gecko: tab ${tab.id} woken")
+        tab.suspended = false
+        tab.session = newSession(tab)
+        tab.session.open(runtime)
+        val state = tab.sessionState
+        if (state != null) tab.session.restoreState(state) else tab.url?.let { tab.session.load(GeckoSession.Loader().uri(it)) }
+    }
+
+    private fun closeSession(tab: Tab) {
         denyPrompts(tab)
+        if (tab.suspended) return
         keyboard?.detach(tab.session)
         extensions.detach(tab.session)
         tab.session.close()
-        onChange?.invoke()
-        return true
     }
 
     /** Resizes the page's viewport; the page reflows to fit, as in any browser. UI thread. */
@@ -732,12 +822,7 @@ class GeckoPanel(
         surface?.release()
         surface = null
         surfaceTexture = null
-        tabs.forEach {
-            denyPrompts(it)
-            keyboard?.detach(it.session)
-            extensions.detach(it.session)
-            it.session.close()
-        }
+        tabs.forEach(::closeSession)
         tabs.clear()
     }
 

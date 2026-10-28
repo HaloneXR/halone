@@ -30,6 +30,8 @@
   "developer.enabled": { "type": "boolean", "default": false },
   "developer.displayStats": { "type": "boolean", "default": false },
   "testMode.enabled": { "type": "boolean", "default": false },
+  "developer.windowLimit": { "type": "enum", "default": "auto", "values": ["auto", "low", "high", "none"] },
+  "developer.tabLimit": { "type": "enum", "default": "auto", "values": ["auto", "low", "high", "none"] },
   "tracking.custom": { "type": "boolean", "default": false },
   "tracking.predictionMs": { "type": "number", "default": 0, "min": 0, "max": 80 },
   "tracking.steadinessDegrees": { "type": "number", "default": 0.2, "min": 0, "max": 3 },
