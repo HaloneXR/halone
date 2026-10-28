@@ -478,6 +478,8 @@ class Shell(
         listeners.forEach { it.onPluginSettingsChanged(packageName) }
     }
 
+    fun acknowledgePlugins() = nativeApps?.acknowledge()
+
     fun setPluginEnabled(packageName: String, enabled: Boolean) {
         val store = nativeApps ?: throw HaloneException("unavailable", "this host has no plugins")
         store.setEnabled(packageName, enabled)

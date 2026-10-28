@@ -10,11 +10,13 @@ const failure = ref<string | null>(null)
 /** The plugin whose settings are open in place of the list. */
 const opened = ref<PluginInfo | null>(null)
 
-halone.plugins.list().then(
-  (list) => (plugins.value = list),
-  (error: Error) => (failure.value = error.message),
-)
-const off = halone.on('plugins.changed', (list) => (plugins.value = list))
+function show(list: PluginInfo[]) {
+  plugins.value = list
+  if (list.some((plugin) => plugin.new)) halone.plugins.acknowledge().catch(() => {})
+}
+
+halone.plugins.list().then(show, (error: Error) => (failure.value = error.message))
+const off = halone.on('plugins.changed', show)
 onBeforeUnmount(off)
 
 const STATES: Record<PluginInfo['state'], string> = {

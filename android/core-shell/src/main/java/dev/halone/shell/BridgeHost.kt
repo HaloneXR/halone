@@ -300,6 +300,7 @@ class BridgeHost(
         "plugins.list" -> pluginList()
         "status.list" -> shell.statusItems.toJson()
         "status.click" -> shell.clickStatusItem(params.requireString("id")).let { null }
+        "plugins.acknowledge" -> shell.acknowledgePlugins().let { null }
         "plugins.setEnabled" -> shell.setPluginEnabled(params.requireString("packageName"), params.requireBoolean("enabled")).let { null }
         "plugins.settings" -> shell.pluginSettingsPage(params.requireString("packageName")).toJson()
         "plugins.setSetting" -> shell.setPluginSetting(params.requireString("packageName"), params.requireString("key"), params.opt("value")).let { null }

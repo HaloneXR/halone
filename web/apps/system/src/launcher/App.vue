@@ -7,7 +7,7 @@ import Icon from '../shared/Icon.vue'
 import NoHost from '../shared/NoHost.vue'
 import { homeUrl, toUrl } from '../shared/address'
 import { displayUrl } from '../shared/address'
-import { useApps, useHost, useRecording, useSettings, useWindows } from '../shared/host'
+import { useApps, useHost, usePlugins, useRecording, useSettings, useWindows } from '../shared/host'
 import { showMenu } from '../shared/menu'
 
 const { halone, status, error } = useHost()
@@ -15,6 +15,7 @@ const windows = useWindows(halone)
 const settings = useSettings(halone)
 const recording = useRecording(halone)
 const apps = useApps(halone)
+const plugins = usePlugins(halone)
 const selfId = ref<string | null>(null)
 const address = ref('')
 const message = ref<string | null>(null)
@@ -56,6 +57,21 @@ const date = computed(() => now.value.toLocaleDateString([], { weekday: 'long', 
 const launchable = computed(() => apps.value.filter((app) => app.id !== 'launcher'))
 const others = computed(() => windows.value.filter((window) => window.id !== selfId.value))
 const appFor = (appId: string | null) => apps.value.find((app) => app.id === appId)
+const newPlugins = computed(() => plugins.value.filter((plugin) => plugin.new))
+const newPluginsText = computed(() => {
+  const names = newPlugins.value.map((plugin) => `“${plugin.label}”`)
+  if (names.length === 1) return `New plugin ${names[0]}`
+  return `${names.length} new plugins: ${names.slice(0, -1).join(', ')} and ${names.at(-1)}`
+})
+
+const dismissPlugins = () => run(() => halone.plugins.acknowledge())
+
+function showPlugins() {
+  run(async () => {
+    await halone.plugins.acknowledge()
+    await halone.apps.launch('settings', 'plugins')
+  })
+}
 
 async function run(action: () => Promise<unknown>) {
   try {
@@ -208,6 +224,16 @@ function toggleFollow() {
     </form>
     <p v-if="message" class="message">{{ message }}</p>
 
+    <div v-if="newPlugins.length" class="notice" role="status">
+      <Icon class="notice-icon" name="extension" />
+      <span class="notice-text">
+        <span class="notice-title">{{ newPluginsText }}</span>
+        <span class="x-muted">Plugins stay off until you turn them on in Settings.</span>
+      </span>
+      <button class="x-button" @click="dismissPlugins">Dismiss</button>
+      <button class="x-button primary" @click="showPlugins"><Icon name="extension" />Go to Plugins</button>
+    </div>
+
     <section>
       <div class="tabs" role="tablist">
         <button role="tab" :aria-selected="tab === 'apps'" :class="{ active: tab === 'apps' }" @click="tab = 'apps'">
@@ -330,6 +356,37 @@ header {
   margin: -12px 0 0;
   color: var(--danger);
   font-size: var(--font-size-small);
+}
+
+.notice {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: -8px;
+  padding: 16px 20px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.notice-icon {
+  color: var(--accent);
+  font-size: 36px;
+}
+
+.notice-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.notice-title {
+  font-weight: 600;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .tabs {
