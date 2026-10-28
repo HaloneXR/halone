@@ -91,6 +91,7 @@ class ShellSession(
     private val requestPermissions: (Array<String>, (Set<String>) -> Unit) -> Unit,
     private val display: () -> DisplayState,
     private val restartDisplay: () -> Unit,
+    private val pointingDevice: () -> Boolean,
     private val log: (String) -> Unit,
 ) : ShellPlatform {
     private val handler = Handler(Looper.getMainLooper())
@@ -601,6 +602,8 @@ class ShellSession(
     }
 
     override fun keyCaptureOn() = KeyCaptureService.running
+
+    override fun pointingDeviceConnected() = pointingDevice()
 
     override fun openKeyCaptureSettings() {
         context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))

@@ -2462,6 +2462,7 @@ class MainActivity : AppCompatActivity() {
                 requestPermissions = ::requestAndroidPermissions,
                 display = ::displayState,
                 restartDisplay = { runOnUiThread { applyChosenMode() } },
+                pointingDevice = { pointingDevice != null },
                 log = { logOnMain(it) },
             )
         } catch (missing: java.io.FileNotFoundException) {
@@ -2555,6 +2556,8 @@ class MainActivity : AppCompatActivity() {
         override fun grabEnd() = dropPanel()
         override fun touchpadDegreesPerDp() = settingNumber(ShellSettings.TOUCHPAD_SPEED, DEFAULT_TOUCHPAD_SPEED)
         override fun mouseDegreesPerCount() = settingNumber(ShellSettings.MOUSE_SPEED, DEFAULT_MOUSE_SPEED)
+        override fun movesWithWindows() =
+            shellSession?.shell?.settings?.let { runCatching { it.boolean(ShellSettings.POINTER_MOVES_WITH_WINDOWS) }.getOrNull() } ?: true
     }
 
     private val pointerHover by lazy {

@@ -32,6 +32,7 @@ class CursorInput(
         fun grabEnd()
         fun touchpadDegreesPerDp(): Float
         fun mouseDegreesPerCount(): Float
+        fun movesWithWindows(): Boolean
     }
 
     val cursor = FreeCursor()
@@ -46,8 +47,10 @@ class CursorInput(
         override fun run() {
             handler.postDelayed(this, FRAME_MS)
             val scene = scene() ?: return
+            val compositor = compositor()
+            if (actions.movesWithWindows()) cursor.ride(compositor?.lastHit?.panel, scene) else cursor.stopRiding()
             cursor.clampTo(scene)
-            compositor()?.pointerDirection = cursor.direction()
+            compositor?.pointerDirection = cursor.direction()
         }
     }
 

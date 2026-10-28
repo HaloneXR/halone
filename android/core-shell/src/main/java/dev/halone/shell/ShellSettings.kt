@@ -134,6 +134,7 @@ class ShellSettings(private val store: SettingsStore, schemaJson: String) {
         const val TRACKING_FRAME_PACING = "tracking.framePacing"
         const val INPUT_POINTER = "input.pointer"
         const val TOUCHPAD_SPEED = "input.touchpadSpeed"
+        const val POINTER_MOVES_WITH_WINDOWS = "input.pointerMovesWithWindows"
         const val MOUSE_SPEED = "input.mouseSpeed"
         const val GESTURE_PREFIX = "gesture."
         const val GLASSES_SCROLL_PX = "gesture.glasses.scrollPx"
