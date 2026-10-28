@@ -249,6 +249,10 @@ class BrowserEngine(
         content.tabs.firstOrNull { it.id == id }?.let(content::close)
     }
 
+    fun backgroundTabs(): List<GeckoPanel.Tab> = content.backgroundTabs()
+
+    fun suspendTab(tab: GeckoPanel.Tab) = content.suspend(tab)
+
     override fun createTexture(textureId: Int): SurfaceTexture = content.createTexture(textureId)
 
     override fun attach() = content.attach()

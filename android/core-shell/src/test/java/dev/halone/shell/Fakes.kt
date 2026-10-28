@@ -111,6 +111,10 @@ class FakePlatform(private val scene: Scene) : ShellPlatform {
         notices += text
     }
 
+    var lowMemory = false
+
+    override fun lowMemoryDevice() = lowMemory
+
     val nativeArgs = HashMap<String, android.os.Bundle?>()
     val statusClicks = mutableListOf<String>()
     val reopened = mutableListOf<String>()

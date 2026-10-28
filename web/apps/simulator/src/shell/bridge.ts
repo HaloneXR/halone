@@ -242,6 +242,7 @@ export class Bridge {
       'apps.launch': ({ appId, route }) => shell.info(shell.launch(appId, route)),
       'apps.uninstall': ({ appId }) => shell.uninstall(appId),
       'plugins.list': () => [],
+      'plugins.acknowledge': () => {},
       'status.list': () => [],
       'status.click': ({ id }) => {
         throw new HaloneError('no-such-item', `status items come from plugins; the simulator has none: ${id}`)

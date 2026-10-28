@@ -44,6 +44,7 @@ import dev.halone.shell.BrowserData
 import dev.halone.shell.BrowserHistory
 import dev.halone.shell.Bookmarks
 import dev.halone.shell.Downloads
+import dev.halone.shell.MemoryLimits
 import dev.halone.shell.MenuItem
 import dev.halone.shell.HalonePackage
 import dev.halone.shell.InstalledApp
@@ -101,6 +102,14 @@ class ShellSession(
             shell.poll()
             bridge.checkFileAccess()
             handler.postDelayed(this, POLL_MS)
+        }
+    }
+
+    private val memory = MemoryWatch(context, log)
+    private val tabSleeper = object : Runnable {
+        override fun run() {
+            suspendTabs()
+            handler.postDelayed(this, TAB_CHECK_MS)
         }
     }
 
@@ -267,6 +276,9 @@ class ShellSession(
 
     fun start() {
         handler.post(poller)
+        handler.postDelayed(tabSleeper, TAB_CHECK_MS)
+        memory.onPressure = { handler.post(::suspendTabs) }
+        context.registerComponentCallbacks(memory)
         shell.addListener(object : dev.halone.shell.ShellListener {
             override fun onPluginsChanged() = connectPlugins()
             override fun onPluginSettingsChanged(packageName: String) = sendSettings(packageName)
@@ -283,6 +295,9 @@ class ShellSession(
 
     fun stop() {
         handler.removeCallbacks(poller)
+        handler.removeCallbacks(tabSleeper)
+        context.unregisterComponentCallbacks(memory)
+        memory.onPressure = null
         devReceiver.unregister()
         mediaBackend.close()
         fileServer.close()
@@ -442,6 +457,20 @@ class ShellSession(
     }
 
     override fun browser(windowId: String): BrowserControl? = browsers[windowId]
+
+    override fun lowMemoryDevice() = memory.lowMemoryDevice
+
+    /** Puts background tabs to sleep, across every web window, as the phone's memory and the developer setting allow. */
+    private fun suspendTabs() {
+        if (browsers.isEmpty()) return
+        val setting = shell.settings.string(ShellSettings.DEVELOPER_TAB_LIMIT)
+        val policy = MemoryLimits.tabs(setting, memory.lowMemoryDevice, memory.pressure()) ?: return
+        val now = android.os.SystemClock.elapsedRealtime()
+        val tabs = browsers.values.flatMap { browser ->
+            browser.backgroundTabs().map { tab -> MemoryLimits.BackgroundTab(browser to tab, now - tab.lastSeenAt, tab.playing || tab.capturing) }
+        }
+        MemoryLimits.toSuspend(tabs, policy).forEach { (browser, tab) -> browser.suspendTab(tab) }
+    }
 
     /** A page's dropdown over window or overlay [sourceId]: a menu at the field, or for several choices a dialog. */
     private fun showSelect(sourceId: String, popup: SelectPopup, answer: (List<Int>?) -> Unit) {
@@ -903,6 +932,7 @@ class ShellSession(
             })()
         """.trimIndent()
         private const val POLL_MS = 200L
+        private const val TAB_CHECK_MS = 15_000L
         private const val FOCUS_REPORT_MS = 2_500L
         private const val EYE_WIDTH_PX = 1920
         private const val EYE_HEIGHT_PX = 1080

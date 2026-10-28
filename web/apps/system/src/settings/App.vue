@@ -35,6 +35,8 @@ interface Group {
   note?: string
   /** Shown above the card while it returns something. */
   warning?: () => string | null
+  /** A page the warning links to. */
+  learnMore?: string
   /** Left out while this is false. */
   shown?: () => boolean
   items: Item[]
@@ -317,6 +319,7 @@ const allSections: Section[] = [
           if (state.renderFps >= state.refreshHz - FRAME_RATE_SLACK) return null
           return `Halone is drawing about ${Math.round(state.renderFps)} frames a second, fewer than the glasses' ${Math.round(state.refreshHz)} Hz. Some phones limit how fast apps can draw to a second screen.`
         },
+        learnMore: REFRESH_RATE_FAQ,
         items: [
           {
             kind: 'rate',
@@ -541,6 +544,32 @@ const allSections: Section[] = [
         ],
       },
       {
+        title: 'Memory',
+        warning: () =>
+          settings.value?.['developer.windowLimit'] === 'none' || settings.value?.['developer.tabLimit'] === 'none'
+            ? 'With no limit, Halone can use more memory than Android allows it, and Android may close it without warning. Use this only to test.'
+            : null,
+        items: [
+          {
+            kind: 'choice',
+            key: 'developer.windowLimit',
+            label: 'Window limit',
+            help: 'How many windows can be open at once. Automatic allows 6, or 4 on phones with less than 12 GB of memory.',
+            labels: { auto: 'Automatic', low: 'As a low-memory phone (4)', high: 'Raised (12)', none: 'No limit' },
+            style: 'dropdown',
+          },
+          {
+            kind: 'choice',
+            key: 'developer.tabLimit',
+            label: 'Background tabs',
+            help: 'How many tabs you are not looking at stay loaded, and for how long. Automatic keeps 6 for 30 minutes, or 2 for 10 minutes on phones with less than 12 GB, and fewer when memory runs short. A tab put to sleep reloads when you go back to it.',
+            labels: { auto: 'Automatic', low: 'As a low-memory phone (2, 10 min)', high: 'Raised (20, 2 h)', none: 'No limit' },
+            style: 'dropdown',
+          },
+        ],
+        note: 'Low-memory mode is what phones with 6 or 8 GB use, so you can try Halone as it runs there.',
+      },
+      {
         title: 'Head tracking',
         items: [
           {
@@ -651,8 +680,8 @@ function rateOptions() {
   }))
 }
 
-function learnMore() {
-  halone.browser.open(REFRESH_RATE_FAQ).catch(() => (message.value = `See ${REFRESH_RATE_FAQ}`))
+function learnMore(url = REFRESH_RATE_FAQ) {
+  halone.browser.open(url).catch(() => (message.value = `See ${url}`))
 }
 
 function shown(groups: Group[]) {
@@ -735,7 +764,7 @@ const visible = computed<{ section: Section; groups: Group[] }[]>(() => {
         <template v-for="(group, index) in entry.groups" :key="index">
           <h3 v-if="group.title" class="x-section-title">{{ group.title }}</h3>
           <p v-if="group.warning?.()" class="warning">
-            {{ group.warning() }} <a href="#" @click.prevent="learnMore">Learn more</a>
+            {{ group.warning() }} <a v-if="group.learnMore" href="#" @click.prevent="learnMore(group.learnMore)">Learn more</a>
           </p>
           <div class="x-card group">
             <div v-for="item in group.items" :key="item.key" class="item" :class="item.kind">
@@ -759,7 +788,7 @@ const visible = computed<{ section: Section; groups: Group[] }[]>(() => {
                   <span class="help x-muted">{{ item.help }}</span>
                   <span v-if="chosenRate?.matchesPhone === false" class="help warning">
                     This phone's screen can't refresh in step with {{ chosenRate.hz }} Hz, so motion may stutter.
-                    <a href="#" @click.prevent="learnMore">Learn more</a>
+                    <a href="#" @click.prevent="learnMore()">Learn more</a>
                   </span>
                 </span>
                 <Dropdown

@@ -56,6 +56,9 @@ interface ShellPlatform {
     /** A short message on the glasses, gone by itself. */
     fun notice(text: String) {}
 
+    /** Whether the phone has little memory, which lowers how much Halone keeps open; see [MemoryLimits]. */
+    fun lowMemoryDevice(): Boolean = false
+
     /** Opens the dock and the launcher, which live outside the arrangement. */
     fun openOverlays(dock: AppInfo, dockUrl: String, launcher: AppInfo, launcherUrl: String)
 
@@ -415,6 +418,7 @@ class Shell(
             focus(window.id)
             return window
         }
+        checkRoom()
         val id = nextId()
         val url = ORIGIN + app.entry
         val panel = platform.openApp(id, app, url) ?: throw unavailable()
@@ -430,6 +434,7 @@ class Shell(
             focus(window.id)
             return window
         }
+        checkRoom()
         val id = nextId()
         val panel = platform.openPackageApp(id, app, packageApps?.filesOf(app.id), app.entryUrl) ?: throw unavailable()
         return add(ShellWindow(id, WindowKind.APP, app.id, app.manifest.name, app.entryUrl, panel).also { it.route = route })
@@ -453,6 +458,7 @@ class Shell(
     }
 
     private fun openNative(app: NativeApp, args: android.os.Bundle?): ShellWindow {
+        checkRoom()
         val id = nextId()
         val panel = platform.openNativeApp(id, app, args) ?: throw unavailable()
         return add(ShellWindow(id, WindowKind.NATIVE, app.id, app.app.name, "", panel))
@@ -477,6 +483,8 @@ class Shell(
         pluginSettingsPage(packageName).values.set(key, value)
         listeners.forEach { it.onPluginSettingsChanged(packageName) }
     }
+
+    fun acknowledgePlugins() = nativeApps?.acknowledge()
 
     fun setPluginEnabled(packageName: String, enabled: Boolean) {
         val store = nativeApps ?: throw HaloneException("unavailable", "this host has no plugins")
@@ -503,6 +511,7 @@ class Shell(
             focus(window.id)
             return window
         }
+        checkRoom()
         val id = nextId()
         val start = target ?: app.startUrl
         val panel = platform.openWebApp(id, app, start) ?: throw unavailable()
@@ -629,6 +638,7 @@ class Shell(
 
     fun openUrl(url: String, private: Boolean = false): ShellWindow {
         val parsed = webUrl(url)
+        checkRoom()
         val id = nextId()
         val panel = platform.openWeb(id, url, private) ?: throw unavailable()
         val window = add(ShellWindow(id, WindowKind.WEB, null, parsed.host, url, panel))
@@ -931,6 +941,19 @@ class Shell(
         notifyWindows()
         checkLauncher()
         return window
+    }
+
+    /** The most windows open at once, or null for no limit. */
+    val windowLimit: Int?
+        get() = MemoryLimits.windows(settings.string(ShellSettings.DEVELOPER_WINDOW_LIMIT), platform.lowMemoryDevice())
+
+    /** Refuses a new window while as many are open as the phone's memory allows, as DeX does. */
+    private fun checkRoom() {
+        val limit = windowLimit ?: return
+        if (windows.size < limit) return
+        val message = "Close a window first: at most $limit can be open at once"
+        platform.notice(message)
+        throw HaloneException("too-many-windows", message)
     }
 
     private fun nextId() = "w${nextWindow++}"

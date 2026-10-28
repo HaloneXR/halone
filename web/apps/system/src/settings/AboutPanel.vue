@@ -29,6 +29,13 @@ async function showLicense(item: Acknowledgement) {
   }
 }
 
+const CREDITS = [
+  { name: 'TheBITLINK', what: 'Design and development' },
+  { name: 'BJDB331', what: 'RayNeo GT Series driver development and other functionality' },
+  { name: 'Rlkirkland', what: 'XREAL One Series driver testing' },
+  { name: '방고장', what: 'XREAL One Series driver testing' },
+]
+
 const LINKS = [
   { label: 'Website', url: 'https://halone.app/', icon: 'language' },
   { label: 'Documentation', url: 'https://halone.dev/', icon: 'description' },
@@ -56,10 +63,10 @@ const LINKS = [
 
     <h3 class="x-section-title">Credits</h3>
     <div class="x-card list">
-      <div class="entry">
+      <div v-for="credit in CREDITS" :key="credit.name" class="entry">
         <span class="text">
-          <span class="label">TheBITLINK</span>
-          <span class="help x-muted">Design and development</span>
+          <span class="label">{{ credit.name }}</span>
+          <span class="help x-muted">{{ credit.what }}</span>
         </span>
       </div>
     </div>

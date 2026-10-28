@@ -45,8 +45,14 @@ data class NativeApp(val packageName: String, val app: ProvidedApp) {
     private fun encode(text: String) = URLEncoder.encode(text, "UTF-8").replace("+", "%20")
 }
 
-/** A plugin as Settings shows it. */
-data class PluginInfo(val plugin: PluginPackage, val state: PluginState, val apps: List<NativeApp>, val hasSettings: Boolean = false) {
+/** A plugin as Settings shows it; [isNew] until the wearer has seen it, in the launcher or in Settings. */
+data class PluginInfo(
+    val plugin: PluginPackage,
+    val state: PluginState,
+    val apps: List<NativeApp>,
+    val hasSettings: Boolean = false,
+    val isNew: Boolean = false,
+) {
     fun toJson(): JSONObject = JSONObject()
         .put("packageName", plugin.packageName)
         .put("label", plugin.label)
@@ -54,6 +60,7 @@ data class PluginInfo(val plugin: PluginPackage, val state: PluginState, val app
         .put("state", state.wire)
         .put("apps", JSONArray(apps.filter { !it.app.hidden }.map { it.app.name }))
         .put("hasSettings", hasSettings)
+        .put("new", isNew)
 }
 
 /**
@@ -61,12 +68,13 @@ data class PluginInfo(val plugin: PluginPackage, val state: PluginState, val app
  * found for the first time is disabled; enabling it records its signing
  * certificate, and a different certificate later refuses it until the wearer
  * enables it again. The apps each plugin listed last are kept, so the
- * launcher and the dock have them before the plugin connects.
+ * launcher and the dock have them before the plugin connects. A plugin
+ * stays new, for the launcher to point out, until the wearer acknowledges it.
  *
  * Call on one thread.
  */
 class NativeApps(private val store: SettingsStore) {
-    private class Record(var certificate: String?, var apps: List<ProvidedApp>)
+    private class Record(var certificate: String?, var apps: List<ProvidedApp>, var acknowledged: Boolean = false)
 
     private val records = LinkedHashMap<String, Record>()
     private var found: Map<String, PluginPackage> = emptyMap()
@@ -84,7 +92,11 @@ class NativeApps(private val store: SettingsStore) {
                 for (i in 0 until array.length()) runCatching {
                     val json = array.getJSONObject(i)
                     val apps = json.optJSONArray("apps")?.let { list -> (0 until list.length()).mapNotNull { appFromJson(list.optJSONObject(it)) } }.orEmpty()
-                    records[json.getString("packageName")] = Record(json.optString("certificate").takeIf { it.isNotEmpty() && !json.isNull("certificate") }, apps)
+                    records[json.getString("packageName")] = Record(
+                        json.optString("certificate").takeIf { it.isNotEmpty() && !json.isNull("certificate") },
+                        apps,
+                        acknowledged = json.optBoolean("acknowledged", true),
+                    )
                 }
             }
         }
@@ -139,7 +151,16 @@ class NativeApps(private val store: SettingsStore) {
 
     fun plugins(): List<PluginInfo> = found.values.map { plugin ->
         val state = stateOf(plugin.packageName)!!
-        PluginInfo(plugin, state, if (state == PluginState.ENABLED) appsOf(plugin.packageName) else emptyList())
+        val isNew = records[plugin.packageName]?.acknowledged == false
+        PluginInfo(plugin, state, if (state == PluginState.ENABLED) appsOf(plugin.packageName) else emptyList(), isNew = isNew)
+    }
+
+    /** The wearer has seen every plugin found so far. */
+    fun acknowledge() {
+        val unseen = found.keys.mapNotNull { records[it] }.filter { !it.acknowledged }
+        if (unseen.isEmpty()) return
+        unseen.forEach { it.acknowledged = true }
+        changed()
     }
 
     fun plugin(packageName: String): PluginPackage? = found[packageName]
@@ -156,6 +177,7 @@ class NativeApps(private val store: SettingsStore) {
                 .put("packageName", packageName)
                 .put("certificate", record.certificate ?: JSONObject.NULL)
                 .put("apps", JSONArray(record.apps.map(::appToJson)))
+                .put("acknowledged", record.acknowledged)
         }).toString())
         onChange?.invoke()
     }

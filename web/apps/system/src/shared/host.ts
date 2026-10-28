@@ -1,5 +1,5 @@
 import { onBeforeUnmount, reactive, ref, type Ref } from 'vue'
-import { useHalone, type AppInfo, type DisplayState, type RecordingState, type Settings, type WindowInfo, type HaloneClient } from '@halone/sdk'
+import { useHalone, type AppInfo, type DisplayState, type PluginInfo, type RecordingState, type Settings, type WindowInfo, type HaloneClient } from '@halone/sdk'
 import { installTextMenu } from './menu'
 
 export type HostStatus = 'connecting' | 'ready' | 'no-host'
@@ -28,7 +28,7 @@ export function useHost() {
 function subscribe<T>(
   halone: HaloneClient,
   load: () => Promise<T>,
-  event: 'windows.changed' | 'settings.changed' | 'display.changed',
+  event: 'windows.changed' | 'settings.changed' | 'display.changed' | 'plugins.changed',
   target: Ref<T>,
 ) {
   load().then((value) => (target.value = value), () => {})
@@ -40,6 +40,12 @@ export function useWindows(halone: HaloneClient) {
   const windows = ref<WindowInfo[]>([])
   subscribe(halone, () => halone.windows.list(), 'windows.changed', windows)
   return windows
+}
+
+export function usePlugins(halone: HaloneClient) {
+  const plugins = ref<PluginInfo[]>([])
+  subscribe(halone, () => halone.plugins.list(), 'plugins.changed', plugins)
+  return plugins
 }
 
 export function useSettings(halone: HaloneClient) {

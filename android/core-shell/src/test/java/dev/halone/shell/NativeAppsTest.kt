@@ -6,6 +6,7 @@ import dev.halone.engine.plugin.ProvidedApp
 import dev.halone.engine.plugin.ProvidedStatusItem
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
@@ -56,6 +57,40 @@ class NativeAppsTest {
 
         apps.update(listOf(plugin()))
         assertEquals(1, platform.notices.size)
+    }
+
+    @Test
+    fun `a plugin stays new until acknowledged, across restarts`() {
+        apps.update(listOf(plugin()))
+        assertTrue(apps.plugins().single().isNew)
+        assertTrue(NativeApps(MemoryStore(store.stored)).also { it.update(listOf(plugin())) }.plugins().single().isNew)
+
+        var changes = 0
+        apps.onChange = { changes++ }
+        apps.acknowledge()
+        apps.acknowledge()
+
+        assertEquals(1, changes)
+        assertFalse(apps.plugins().single().isNew)
+        assertFalse(NativeApps(MemoryStore(store.stored)).also { it.update(listOf(plugin())) }.plugins().single().isNew)
+    }
+
+    @Test
+    fun `plugins found before acknowledgement was kept are not new`() {
+        val old = MemoryStore("""[{"packageName":"dev.example.plugin","certificate":null,"apps":[]}]""")
+        val restored = NativeApps(old)
+        restored.update(listOf(plugin()))
+
+        assertFalse(restored.plugins().single().isNew)
+    }
+
+    @Test
+    fun `a plugin found after the others were acknowledged is the only new one`() {
+        apps.update(listOf(plugin()))
+        apps.acknowledge()
+        apps.update(listOf(plugin(), plugin(packageName = "dev.example.second")))
+
+        assertEquals(listOf("dev.example.second"), apps.plugins().filter { it.isNew }.map { it.plugin.packageName })
     }
 
     @Test
@@ -219,6 +254,11 @@ class NativeAppsTest {
         val listed = call("plugins.list").getJSONArray("result").getJSONObject(0)
         assertEquals("dev.example.plugin", listed.getString("packageName"))
         assertEquals("disabled", listed.getString("state"))
+        assertTrue(listed.getBoolean("new"))
+
+        assertTrue(call("plugins.acknowledge").getBoolean("ok"))
+        val acknowledged = settings.posted.map { JSONObject(it) }.last { it.optString("name") == "plugins.changed" }
+        assertFalse(acknowledged.getJSONArray("data").getJSONObject(0).getBoolean("new"))
 
         assertTrue(call("plugins.setEnabled", JSONObject().put("packageName", "dev.example.plugin").put("enabled", true)).getBoolean("ok"))
         assertEquals(PluginState.ENABLED, apps.stateOf("dev.example.plugin"))
