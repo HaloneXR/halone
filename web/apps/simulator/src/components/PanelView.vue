@@ -346,7 +346,7 @@ iframe {
   opacity: 1;
 }
 
-.panel.hide-bar:not(.grabbed, :hover) .bar {
+.panel.hide-bar:not(.grabbed) .bar:not(:hover) {
   opacity: 0;
   transition: opacity 600ms;
 }

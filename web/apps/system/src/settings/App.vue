@@ -218,7 +218,7 @@ const allSections: Section[] = [
             kind: 'choice',
             key: 'windows.autoHideTitleBars',
             label: 'Auto-hide title bars',
-            help: 'Hidden title bars fade out, and come back when the pointer reaches their window.',
+            help: 'Hidden title bars fade out, and come back when the pointer nears them, like the dock.',
             labels: { never: 'Never', unfocused: 'Unfocused windows', always: 'Always' },
             style: 'dropdown',
           },

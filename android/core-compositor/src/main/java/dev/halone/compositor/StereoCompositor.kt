@@ -1171,7 +1171,7 @@ class StereoCompositor(
         titleBarShown.keys.retainAll(panels.mapTo(HashSet()) { it.id })
         for (panel in panels) {
             val wanted = (hiding == TitleBarHiding.UNFOCUSED && panel === scene.focused) ||
-                panel === scene.grabbed || lastHit?.panel === panel || scene.resizing?.panel === panel
+                panel === scene.grabbed || scene.resizing?.panel === panel || nearTitleBar(panel)
             val current = titleBarShown[panel.id] ?: 1f
             titleBarShown[panel.id] = if (wanted) {
                 minOf(1f, current + TITLE_BAR_IN_PER_S * seconds)
@@ -1179,6 +1179,15 @@ class StereoCompositor(
                 maxOf(0f, current - TITLE_BAR_OUT_PER_S * seconds)
             }
         }
+    }
+
+    /** Like the dock: the pointer on the bar, or on the window just above it. */
+    private fun nearTitleBar(panel: Panel): Boolean {
+        val hit = lastHit?.takeIf { it.panel === panel } ?: return false
+        if (hit.part in TITLE_BAR_PARTS) return true
+        val bar = TitleBar.bar(panel.widthPx, panel.heightPx)
+        return hit.hit.y >= panel.heightPx - TITLE_BAR_NEAR_PX &&
+            hit.hit.x >= bar.left - TITLE_BAR_NEAR_PX && hit.hit.x <= bar.right + TITLE_BAR_NEAR_PX
     }
 
     /** The pill under the panel, in the panel's own plane. */
@@ -1745,6 +1754,8 @@ class StereoCompositor(
         /** Back quickly, so a reach for the bar finds it; away slowly, so it doesn't flicker. */
         private const val TITLE_BAR_IN_PER_S = 8f
         private const val TITLE_BAR_OUT_PER_S = 1.5f
+        private const val TITLE_BAR_NEAR_PX = 120f
+        private val TITLE_BAR_PARTS = setOf(HitPart.TITLE_BAR, HitPart.BACK, HitPart.PIN, HitPart.SIZE, HitPart.CLOSE)
 
         /** An unfocused panel's border is present but quiet. */
         private const val UNFOCUSED_CHROME = 0.3f
