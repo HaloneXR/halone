@@ -231,6 +231,7 @@ export class Bridge {
       },
       'clipboard.writeFiles': (files) => shell.writeClipboardFiles(files),
       'input.keyCapture': () => ({ enabled: false }),
+      'input.pointingDevice': () => ({ connected: false }),
       'input.openKeyCaptureSettings': () => {
         throw new HaloneError('unavailable', 'key capture is an Android accessibility service; the simulator has no use for it')
       },

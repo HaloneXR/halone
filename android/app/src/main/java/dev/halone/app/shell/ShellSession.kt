@@ -10,6 +10,7 @@ import android.os.Looper
 import dev.halone.compositor.CollisionPolicy
 import dev.halone.compositor.DockVisibility
 import dev.halone.compositor.SizeLimits
+import dev.halone.compositor.TitleBarHiding
 import dev.halone.compositor.Panel
 import dev.halone.engine.plugin.PluginConnection
 import dev.halone.engine.plugin.PluginDirectory
@@ -90,6 +91,7 @@ class ShellSession(
     private val requestPermissions: (Array<String>, (Set<String>) -> Unit) -> Unit,
     private val display: () -> DisplayState,
     private val restartDisplay: () -> Unit,
+    private val pointingDevice: () -> Boolean,
     private val log: (String) -> Unit,
 ) : ShellPlatform {
     private val handler = Handler(Looper.getMainLooper())
@@ -601,6 +603,8 @@ class ShellSession(
 
     override fun keyCaptureOn() = KeyCaptureService.running
 
+    override fun pointingDeviceConnected() = pointingDevice()
+
     override fun openKeyCaptureSettings() {
         context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
@@ -814,6 +818,11 @@ class ShellSession(
         }
         scene.windowsHideDelaySeconds = settings.number(ShellSettings.WINDOWS_AUTO_HIDE_DELAY_SECONDS).toFloat()
         scene.shapeButtons = settings.boolean(ShellSettings.WINDOWS_SHAPE_BUTTON)
+        stereo.titleBarHiding = when (settings.string(ShellSettings.WINDOWS_AUTO_HIDE_TITLE_BARS)) {
+            "unfocused" -> TitleBarHiding.UNFOCUSED
+            "always" -> TitleBarHiding.ALWAYS
+            else -> TitleBarHiding.NEVER
+        }
         val spacing = settings.number(ShellSettings.SLOT_SPACING_DEGREES).toFloat()
         if (spacing != scene.slotSpacingDegrees) scene.layOutCylindrical(spacing, immediate = false)
 

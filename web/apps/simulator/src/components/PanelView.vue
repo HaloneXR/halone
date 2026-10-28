@@ -22,6 +22,10 @@ const bar = computed(() => {
   return { left: `${left}px`, top: `${top}px`, width: `${width}px`, height: `${height}px` }
 })
 const grabbed = computed(() => shell.state.grabbedId === props.window.id)
+const hideBar = computed(() => {
+  const hiding = shell.state.settings['windows.autoHideTitleBars']
+  return hiding === 'always' || (hiding === 'unfocused' && !focused.value)
+})
 
 const BEHIND_DEGREES = 85
 
@@ -134,7 +138,7 @@ function onGrabUp() {
 <template>
   <div
     class="panel"
-    :class="{ focused, pinned: window.pinned, grabbed, blend }"
+    :class="{ focused, pinned: window.pinned, grabbed, blend, 'hide-bar': hideBar }"
     :style="{ transform, zIndex: grabbed ? 3 : focused ? 2 : 1, visibility: inFront ? 'visible' : 'hidden', opacity: shell.state.windowsOpacity }"
     :data-window-id="window.id"
   >
@@ -340,6 +344,11 @@ iframe {
 .panel.focused .bar,
 .panel.grabbed .bar {
   opacity: 1;
+}
+
+.panel.hide-bar:not(.grabbed) .bar:not(:hover) {
+  opacity: 0;
+  transition: opacity 600ms;
 }
 
 .panel.grabbed .bar {

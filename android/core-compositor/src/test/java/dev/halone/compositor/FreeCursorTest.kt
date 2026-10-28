@@ -123,4 +123,48 @@ class FreeCursorTest {
         // Carried leftward over ±180° onto b, and stopped at b's far edge.
         assertEquals(-170f + halfWidth, deg(cursor.yawRadians), 1e-2f)
     }
+
+    @Test
+    fun `riding, the cursor keeps its place on a panel that moves`() {
+        val scene = twoPanels()
+        val left = scene.panels[0]
+        val cursor = FreeCursor()
+        cursor.placeAt(rad(18f), rad(2f), scene)
+
+        cursor.ride(left, scene)
+        left.pose = left.pose.copy(yawRadians = rad(25f), pitchRadians = rad(1f))
+        cursor.ride(left, scene)
+
+        assertEquals(28f, deg(cursor.yawRadians), 1e-3f)
+        assertEquals(3f, deg(cursor.pitchRadians), 1e-3f)
+    }
+
+    @Test
+    fun `between panels it rides the last one it was on`() {
+        val scene = twoPanels()
+        val right = scene.panels[1]
+        val cursor = FreeCursor()
+        cursor.placeAt(0f, 0f, scene)
+
+        cursor.ride(right, scene)
+        right.pose = right.pose.copy(yawRadians = rad(-10f))
+        cursor.ride(null, scene)
+
+        assertEquals(5f, deg(cursor.yawRadians), 1e-3f)
+    }
+
+    @Test
+    fun `it stays put while a window is held`() {
+        val scene = twoPanels()
+        val left = scene.panels[0]
+        val cursor = FreeCursor()
+        cursor.placeAt(rad(15f), 0f, scene)
+
+        cursor.ride(left, scene)
+        scene.beginGrab(left, cursor.direction())
+        left.pose = left.pose.copy(yawRadians = rad(25f))
+        cursor.ride(left, scene)
+
+        assertEquals(15f, deg(cursor.yawRadians), 1e-3f)
+    }
 }

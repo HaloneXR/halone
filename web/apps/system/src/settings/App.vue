@@ -8,7 +8,7 @@ import SystemPanel from '../shared/SystemPanel.vue'
 import KeyboardPanel from './KeyboardPanel.vue'
 import PluginsPanel from './PluginsPanel.vue'
 import AboutPanel from './AboutPanel.vue'
-import { onPhone, onRoute, useDisplay, useHost, useSettings } from '../shared/host'
+import { onPhone, onRoute, useDisplay, useHost, usePointingDevice, useSettings } from '../shared/host'
 
 
 type Rule = { type: 'boolean' } | { type: 'number'; min: number; max: number } | { type: 'enum'; values: string[] }
@@ -54,6 +54,7 @@ interface Section {
 const { halone, status, error } = useHost()
 const settings = useSettings(halone)
 const display = useDisplay(halone)
+const pointingDevice = usePointingDevice(halone)
 const chosenRate = computed(() => display.value?.rates.find((rate) => rate.hz === settings.value?.['display.refreshRate']) ?? null)
 const schema = ref<Record<string, Rule>>({})
 const message = ref<string | null>(null)
@@ -212,6 +213,14 @@ const allSections: Section[] = [
             help: 'How long the pointer has to be off your windows before they go.',
             step: 0.1,
             format: (v) => `${v.toFixed(1)} s`,
+          },
+          {
+            kind: 'choice',
+            key: 'windows.autoHideTitleBars',
+            label: 'Auto-hide title bars',
+            help: 'Hidden title bars fade out, and come back when the pointer nears them, like the dock.',
+            labels: { never: 'Never', unfocused: 'Unfocused windows', always: 'Always' },
+            style: 'dropdown',
           },
         ],
       },
@@ -422,6 +431,17 @@ const allSections: Section[] = [
           },
         ],
         note: 'Connecting a mouse or trackpad over Bluetooth switches to it automatically, and a connected keyboard types into the window under the cursor.',
+      },
+      {
+        shown: () => settings.value?.['input.pointer'] === 'touchpad' || pointingDevice.value,
+        items: [
+          {
+            kind: 'toggle',
+            key: 'input.pointerMovesWithWindows',
+            label: 'Pointer moves with windows',
+            help: 'The cursor is carried along by the window or dock it is on when they move, rather than staying where it was.',
+          },
+        ],
       },
     ],
   },

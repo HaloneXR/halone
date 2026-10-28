@@ -39,10 +39,41 @@ class FreeCursor {
     }
 
     fun placeAt(yawRadians: Float, pitchRadians: Float, scene: PanelScene<*>) {
+        stopRiding()
         this.yawRadians = Panel.wrapPi(yawRadians)
         this.pitchRadians = pitchRadians
         clampTo(scene)
     }
+
+    private var riding: Panel? = null
+    private var ridingYaw = 0f
+    private var ridingPitch = 0f
+
+    /**
+     * Carries the cursor along with [under], the panel it is on, or while it is
+     * between panels the last one it was on: following and the dock move
+     * panels out from under a cursor that would otherwise stay put. Not while
+     * a window is held or resized, which the cursor itself is moving.
+     */
+    fun ride(under: Panel?, scene: PanelScene<*>) {
+        if (scene.grabbed != null || scene.resizing != null) return stopRiding()
+        val panel = under ?: riding?.takeIf { it.inScene(scene) } ?: return stopRiding()
+        val pose = panel.pose
+        if (panel === riding) {
+            yawRadians = Panel.wrapPi(yawRadians + Panel.wrapPi(pose.yawRadians - ridingYaw))
+            pitchRadians += pose.pitchRadians - ridingPitch
+        }
+        riding = panel
+        ridingYaw = pose.yawRadians
+        ridingPitch = pose.pitchRadians
+    }
+
+    fun stopRiding() {
+        riding = null
+    }
+
+    private fun Panel.inScene(scene: PanelScene<*>) =
+        this === scene.dock || this === scene.launcher || this === scene.popup || scene.panels.any { it === this }
 
     /**
      * Pulls the cursor back inside the panels' extent. Panels move — following,

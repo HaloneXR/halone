@@ -62,6 +62,16 @@ export function useDisplay(halone: HaloneClient) {
 
 const DISPLAY_POLL_MS = 2000
 
+/** Whether a mouse or trackpad is connected, looked at again now and then since nothing announces it. */
+export function usePointingDevice(halone: HaloneClient) {
+  const connected = ref(false)
+  const check = () => halone.input.pointingDevice().then((value) => (connected.value = value.connected), () => {})
+  check()
+  const timer = setInterval(check, DISPLAY_POLL_MS)
+  onBeforeUnmount(() => clearInterval(timer))
+  return connected
+}
+
 export function useFocus(halone: HaloneClient) {
   const state = reactive({ focused: false })
   const off = halone.on('window.focusChanged', ({ focused }) => (state.focused = focused))

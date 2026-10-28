@@ -471,6 +471,12 @@ class StereoCompositor(
     var framesDrawn = 0L
         private set
 
+    @Volatile
+    var titleBarHiding = TitleBarHiding.NEVER
+
+    private val titleBarShown = HashMap<String, Float>()
+    private var titleBarsSteppedAt = 0L
+
     // A long frame freezes the scene relative to the head: the rendered pose
     // stops updating while the head keeps moving, so world-locked content
     // momentarily behaves as if it were head-locked and then snaps back. That is
@@ -681,6 +687,7 @@ class StereoCompositor(
         val background = attachImmersive()
         freeAbandonedTextures()
         titleBars.forget(panels.mapTo(HashSet()) { it.id }).forEach { abandonedTextures += it }
+        stepTitleBars(panels)
         val stacked = scene.drawOrder()
 
         for (eye in 0 until eyeCount) {
@@ -1152,8 +1159,52 @@ class StereoCompositor(
         )
     }
 
+    private fun stepTitleBars(panels: List<Panel>) {
+        val now = System.nanoTime()
+        val seconds = if (titleBarsSteppedAt == 0L) 0f else ((now - titleBarsSteppedAt) / 1e9f).coerceAtMost(0.1f)
+        titleBarsSteppedAt = now
+        val hiding = titleBarHiding
+        if (hiding == TitleBarHiding.NEVER) {
+            titleBarShown.clear()
+            return
+        }
+        titleBarShown.keys.retainAll(panels.mapTo(HashSet()) { it.id })
+        for (panel in panels) {
+            val wanted = (hiding == TitleBarHiding.UNFOCUSED && panel === scene.focused) ||
+                panel === scene.grabbed || scene.resizing?.panel === panel || nearTitleBar(panel)
+            val current = titleBarShown[panel.id] ?: 1f
+            titleBarShown[panel.id] = if (wanted) {
+                minOf(1f, current + TITLE_BAR_IN_PER_S * seconds)
+            } else {
+                maxOf(0f, current - TITLE_BAR_OUT_PER_S * seconds)
+            }
+        }
+    }
+
+    /**
+     * Like the dock: the pointer on the bar, on the window just above it, or
+     * in the gap between them, which belongs to neither and so is measured
+     * against the window's plane rather than hit-tested.
+     */
+    private fun nearTitleBar(panel: Panel): Boolean {
+        val hit = lastHit
+        if (hit != null && hit.panel !== panel) return false
+        if (hit != null && hit.part in TITLE_BAR_PARTS) return true
+        val pose = panel.pose
+        val local = PanelScene.intoPanelFrame(lastAim, pose.yawRadians, pose.pitchRadians)
+        if (local.z >= -1e-4f) return false
+        val t = -pose.distanceMetres / local.z
+        val x = ((local.x * t) / pose.widthMetres + 0.5f) * panel.widthPx
+        val y = (0.5f - (local.y * t) / pose.heightMetres) * panel.heightPx
+        val bar = TitleBar.bar(panel.widthPx, panel.heightPx)
+        return y >= panel.heightPx - TITLE_BAR_NEAR_PX && y <= bar.bottom &&
+            x >= bar.left - TITLE_BAR_NEAR_PX && x <= bar.right + TITLE_BAR_NEAR_PX
+    }
+
     /** The pill under the panel, in the panel's own plane. */
     private fun drawTitleBar(panel: Panel, viewProjection: FloatArray, active: Boolean, opacity: Float) {
+        val shown = titleBarShown[panel.id] ?: 1f
+        if (shown <= 0f) return
         val hit = lastHit
         val texture = titleBars.texture(panel, hovered = hit?.part?.takeIf { hit.panel === panel }, shape = scene.shapeButtons)
         val pose = panel.pose
@@ -1170,7 +1221,7 @@ class StereoCompositor(
         )
         Matrix.scaleM(cursorModel, 0, bar.width * metresPerPx, bar.height * metresPerPx, 1f)
         Matrix.multiplyMM(mvp, 0, viewProjection, 0, cursorModel, 0)
-        bitmapQuad.draw(mvp, texture, (if (active) 1f else INACTIVE_TITLE_BAR) * opacity)
+        bitmapQuad.draw(mvp, texture, (if (active) 1f else INACTIVE_TITLE_BAR) * opacity * shown)
     }
 
     /**
@@ -1710,6 +1761,12 @@ class StereoCompositor(
 
         /** An unfocused window's title bar, as in the simulator. */
         private const val INACTIVE_TITLE_BAR = 0.55f
+
+        /** Back quickly, so a reach for the bar finds it; away slowly, so it doesn't flicker. */
+        private const val TITLE_BAR_IN_PER_S = 8f
+        private const val TITLE_BAR_OUT_PER_S = 1.5f
+        private const val TITLE_BAR_NEAR_PX = 120f
+        private val TITLE_BAR_PARTS = setOf(HitPart.TITLE_BAR, HitPart.BACK, HitPart.PIN, HitPart.SIZE, HitPart.CLOSE)
 
         /** An unfocused panel's border is present but quiet. */
         private const val UNFOCUSED_CHROME = 0.3f
