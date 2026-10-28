@@ -9,6 +9,7 @@
   "windows.autoHide": { "type": "boolean", "default": false },
   "windows.autoHideDelaySeconds": { "type": "number", "default": 1, "min": 0.2, "max": 5 },
   "windows.shapeButton": { "type": "boolean", "default": false },
+  "windows.autoHideTitleBars": { "type": "enum", "default": "never", "values": ["never", "unfocused", "always"] },
   "windows.reclaimPhone": { "type": "boolean", "default": true },
   "dock.pinnedApps": { "type": "list", "default": ["files", "settings"], "maxItems": 12 },
   "browser.searchEngine": { "type": "enum", "default": "duckduckgo", "values": ["duckduckgo", "google", "bing"] },

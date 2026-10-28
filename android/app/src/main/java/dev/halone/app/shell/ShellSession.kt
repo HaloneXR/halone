@@ -10,6 +10,7 @@ import android.os.Looper
 import dev.halone.compositor.CollisionPolicy
 import dev.halone.compositor.DockVisibility
 import dev.halone.compositor.SizeLimits
+import dev.halone.compositor.TitleBarHiding
 import dev.halone.compositor.Panel
 import dev.halone.engine.plugin.PluginConnection
 import dev.halone.engine.plugin.PluginDirectory
@@ -814,6 +815,11 @@ class ShellSession(
         }
         scene.windowsHideDelaySeconds = settings.number(ShellSettings.WINDOWS_AUTO_HIDE_DELAY_SECONDS).toFloat()
         scene.shapeButtons = settings.boolean(ShellSettings.WINDOWS_SHAPE_BUTTON)
+        stereo.titleBarHiding = when (settings.string(ShellSettings.WINDOWS_AUTO_HIDE_TITLE_BARS)) {
+            "unfocused" -> TitleBarHiding.UNFOCUSED
+            "always" -> TitleBarHiding.ALWAYS
+            else -> TitleBarHiding.NEVER
+        }
         val spacing = settings.number(ShellSettings.SLOT_SPACING_DEGREES).toFloat()
         if (spacing != scene.slotSpacingDegrees) scene.layOutCylindrical(spacing, immediate = false)
 

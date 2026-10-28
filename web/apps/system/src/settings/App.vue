@@ -213,6 +213,14 @@ const allSections: Section[] = [
             step: 0.1,
             format: (v) => `${v.toFixed(1)} s`,
           },
+          {
+            kind: 'choice',
+            key: 'windows.autoHideTitleBars',
+            label: 'Auto-hide title bars',
+            help: 'Hidden title bars fade out, and come back when the pointer reaches their window.',
+            labels: { never: 'Never', unfocused: 'Unfocused windows', always: 'Always' },
+            style: 'dropdown',
+          },
         ],
       },
       {

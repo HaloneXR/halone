@@ -11,6 +11,7 @@ import dev.halone.compositor.PanelPose
 import dev.halone.compositor.Scene
 import dev.halone.compositor.SmoothFollow
 import dev.halone.compositor.StereoCompositor
+import dev.halone.compositor.TitleBarHiding
 import dev.halone.display.GlassesDisplaySession
 import dev.halone.display.RenderPresentation
 import dev.halone.glasses.api.DisplayMode
@@ -45,6 +46,12 @@ class GlassesStereoSession(
     /** Latch pacing as this session would choose it, for the `auto` frame-pacing setting. */
     var autoPaceOnLatch = true
         private set
+
+    var titleBarHiding = TitleBarHiding.NEVER
+        set(value) {
+            field = value
+            compositor?.titleBarHiding = value
+        }
 
     /** Glasses pacing as this session would choose it: for a rate the phone's screen is out of step with. */
     var autoPaceToGlasses = false
@@ -86,6 +93,7 @@ class GlassesStereoSession(
             // the compositor renders with.
             it.calibration = tracker.calibration
             it.displayClock = displayClock
+            it.titleBarHiding = titleBarHiding
             it.onStereoChanged = { onDisplayChanged?.invoke() }
             meterFrames(it)
             present(it, display, rateHz)
