@@ -6,7 +6,7 @@ plugins {
 android {
     namespace = "dev.halone.display"
     compileSdk = 37
-    compileSdkMinor = 1
+    compileSdkMinor = 2
 
     defaultConfig {
         minSdk = 29

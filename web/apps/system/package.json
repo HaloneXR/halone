@@ -9,13 +9,13 @@
     "typecheck": "vue-tsc -p ."
   },
   "dependencies": {
-    "@halone/sdk": "^0.1.0",
+    "@halone/sdk": "^0.3.0",
     "@halone/ui": "workspace:*",
-    "vue": "^3.5.43"
+    "vue": "^3.5.44"
   },
   "devDependencies": {
-    "@vitejs/plugin-vue": "^6.0.9",
-    "vite": "^8.3.1",
-    "vue-tsc": "^3.3.11"
+    "@vitejs/plugin-vue": "^6.0.10",
+    "vite": "^8.3.5",
+    "vue-tsc": "^3.3.13"
   }
 }

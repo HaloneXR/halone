@@ -13,7 +13,7 @@ val buildDate: String = (findProperty("halone.date") as String?)
 android {
     namespace = "dev.halone.app"
     compileSdk = 37
-    compileSdkMinor = 1
+    compileSdkMinor = 2
 
     defaultConfig {
         applicationId = "dev.halone.app"
