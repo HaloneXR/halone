@@ -1181,13 +1181,24 @@ class StereoCompositor(
         }
     }
 
-    /** Like the dock: the pointer on the bar, or on the window just above it. */
+    /**
+     * Like the dock: the pointer on the bar, on the window just above it, or
+     * in the gap between them, which belongs to neither and so is measured
+     * against the window's plane rather than hit-tested.
+     */
     private fun nearTitleBar(panel: Panel): Boolean {
-        val hit = lastHit?.takeIf { it.panel === panel } ?: return false
-        if (hit.part in TITLE_BAR_PARTS) return true
+        val hit = lastHit
+        if (hit != null && hit.panel !== panel) return false
+        if (hit != null && hit.part in TITLE_BAR_PARTS) return true
+        val pose = panel.pose
+        val local = PanelScene.intoPanelFrame(lastAim, pose.yawRadians, pose.pitchRadians)
+        if (local.z >= -1e-4f) return false
+        val t = -pose.distanceMetres / local.z
+        val x = ((local.x * t) / pose.widthMetres + 0.5f) * panel.widthPx
+        val y = (0.5f - (local.y * t) / pose.heightMetres) * panel.heightPx
         val bar = TitleBar.bar(panel.widthPx, panel.heightPx)
-        return hit.hit.y >= panel.heightPx - TITLE_BAR_NEAR_PX &&
-            hit.hit.x >= bar.left - TITLE_BAR_NEAR_PX && hit.hit.x <= bar.right + TITLE_BAR_NEAR_PX
+        return y >= panel.heightPx - TITLE_BAR_NEAR_PX && y <= bar.bottom &&
+            x >= bar.left - TITLE_BAR_NEAR_PX && x <= bar.right + TITLE_BAR_NEAR_PX
     }
 
     /** The pill under the panel, in the panel's own plane. */
