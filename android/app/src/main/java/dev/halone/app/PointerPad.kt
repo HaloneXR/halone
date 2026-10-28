@@ -16,7 +16,9 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import dev.halone.app.pointer.PadGestures
 
 /**
@@ -267,12 +269,13 @@ class PointerPad(
         }
 
     /**
-     * The phone screen "off" while the glasses stay on: every pixel black
-     * and the backlight as low as the window may set it. On an OLED phone
-     * (OnePlus 12) black pixels are unlit, so the screen is dark and draws
-     * next to nothing — but the phone is awake, so the glasses' display, the
-     * tracking and the pad all keep working. Really sleeping the phone would
-     * lock it and take the glasses' picture with it.
+     * The phone screen "off" while the glasses stay on: every pixel black,
+     * the status and navigation bars hidden. On an OLED phone black pixels
+     * are unlit, so the screen is dark and draws next to nothing — but the
+     * phone is awake, so the glasses' display, the tracking and the pad all
+     * keep working. Really sleeping the phone would lock it and take the
+     * glasses' picture with it; powering the panel off needs a watchdog to
+     * bring it back if Halone dies.
      *
      * The pad still takes gestures in the dark; a tap along the top edge,
      * where the buttons were, turns the screen back on.
@@ -283,10 +286,9 @@ class PointerPad(
         visibleParts.forEach { it.visibility = if (off) View.INVISIBLE else View.VISIBLE }
         applyStats()
         wakeStrip?.visibility = if (off) View.VISIBLE else View.GONE
-        activity.window.attributes = activity.window.attributes.apply {
-            screenBrightness =
-                if (off) android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_OFF
-                else android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+        WindowCompat.getInsetsController(activity.window, activity.window.decorView).apply {
+            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            if (off) hide(WindowInsetsCompat.Type.systemBars()) else show(WindowInsetsCompat.Type.systemBars())
         }
         tick()
     }
