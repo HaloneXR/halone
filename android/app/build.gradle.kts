@@ -24,9 +24,30 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    val keystore = findProperty("haloneKeystore") as String?
+    val releaseSigning = keystore?.let {
+        signingConfigs.create("release") {
+            storeFile = file(it)
+            storePassword = findProperty("haloneKeystorePassword") as String?
+            keyAlias = findProperty("haloneKeyAlias") as String?
+            keyPassword = findProperty("haloneKeyPassword") as String?
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = releaseSigning
+        }
+    }
+
+    // GeckoView's native libraries are ~150 MB per ABI, so each architecture gets its own APK.
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "x86_64")
+            isUniversalApk = false
         }
     }
 
