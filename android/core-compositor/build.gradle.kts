@@ -6,7 +6,7 @@ plugins {
 android {
     namespace = "dev.halone.compositor"
     compileSdk = 37
-    compileSdkMinor = 1
+    compileSdkMinor = 2
     ndkVersion = "27.1.12297006"
 
     defaultConfig {
