@@ -10,6 +10,9 @@ plugins {
 val buildDate: String = (findProperty("halone.date") as String?)
     ?: LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy.MM.dd"))
 
+// A second build on the same day needs a higher version code for Google Play: -Phalone.build=1, 2…
+val buildNumber: Int = (findProperty("halone.build") as String?)?.toInt() ?: 0
+
 android {
     namespace = "dev.halone.app"
     compileSdk = 37
@@ -19,8 +22,8 @@ android {
         applicationId = "dev.halone.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = buildDate.replace(".", "").toInt()
-        versionName = "$buildDate-alpha"
+        versionCode = buildDate.replace(".", "").toInt() * 100 + buildNumber
+        versionName = if (buildNumber == 0) "$buildDate-alpha" else "$buildDate.$buildNumber-alpha"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
