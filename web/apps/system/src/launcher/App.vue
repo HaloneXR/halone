@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { AppInfo, Bookmark } from '@halone/sdk'
 import AppIcon from '../shared/AppIcon.vue'
 import AppTile from './AppTile.vue'
 import Icon from '../shared/Icon.vue'
+import KeyCaptureDisclosure from '../shared/KeyCaptureDisclosure.vue'
 import NoHost from '../shared/NoHost.vue'
 import { homeUrl, toUrl } from '../shared/address'
 import { displayUrl } from '../shared/address'
-import { useApps, useHost, usePlugins, useRecording, useSettings, useWindows } from '../shared/host'
+import { useApps, useHost, useKeyCapture, usePlugins, useRecording, useSettings, useWindows } from '../shared/host'
 import { showMenu } from '../shared/menu'
 
 const { halone, status, error } = useHost()
@@ -16,6 +17,7 @@ const settings = useSettings(halone)
 const recording = useRecording(halone)
 const apps = useApps(halone)
 const plugins = usePlugins(halone)
+const keyCapture = useKeyCapture(halone)
 const selfId = ref<string | null>(null)
 const address = ref('')
 const message = ref<string | null>(null)
@@ -39,6 +41,7 @@ function onKey(event: KeyboardEvent) {
     halone.launcher.setOpen(false).catch(() => {})
     return
   }
+  if (askKeyCapture.value) return
   const typing = event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey
   if (!typing || document.activeElement === field.value || !field.value) return
   event.preventDefault()
@@ -63,6 +66,13 @@ const newPluginsText = computed(() => {
   if (names.length === 1) return `New plugin ${names[0]}`
   return `${names.length} new plugins: ${names.slice(0, -1).join(', ')} and ${names.at(-1)}`
 })
+
+const askKeyCapture = computed(() => keyCapture.value === true && settings.value?.['input.keyCaptureConsent'] === 'unasked')
+watch(askKeyCapture, (ask) => {
+  if (ask) halone.launcher.setOpen(true).catch(() => {})
+})
+
+const answerKeyCapture = (consent: 'granted' | 'declined') => run(() => halone.settings.set('input.keyCaptureConsent', consent))
 
 const dismissPlugins = () => run(() => halone.plugins.acknowledge())
 
@@ -292,6 +302,8 @@ function toggleFollow() {
         />
       </div>
     </section>
+
+    <KeyCaptureDisclosure v-if="askKeyCapture" already-on @enable="answerKeyCapture('granted')" @keep="answerKeyCapture('declined')" />
   </main>
 </template>
 
