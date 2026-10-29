@@ -138,6 +138,8 @@ class ShellSettings(private val store: SettingsStore, schemaJson: String) {
         const val TOUCHPAD_SPEED = "input.touchpadSpeed"
         const val POINTER_MOVES_WITH_WINDOWS = "input.pointerMovesWithWindows"
         const val MOUSE_SPEED = "input.mouseSpeed"
+        /** Key capture is used only once the wearer has agreed to the in-app disclosure, whatever Android's own switch says. */
+        const val KEY_CAPTURE_CONSENT = "input.keyCaptureConsent"
         const val GESTURE_PREFIX = "gesture."
         const val GLASSES_SCROLL_PX = "gesture.glasses.scrollPx"
 

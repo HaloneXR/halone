@@ -2471,7 +2471,7 @@ class MainActivity : AppCompatActivity() {
         }
         shellSession = shell
         shell.start()
-        KeyCaptureService.router = { event -> isPhysicalKeyboard(event) && onShortcutKey(event, captured = true) }
+        KeyCaptureService.router = { event -> isPhysicalKeyboard(event) && keyCaptureUsable() && onShortcutKey(event, captured = true) }
         bedMode = tracker?.let { head ->
             BedModeController(head, { stereoSession?.compositor }, shell.shell.settings, ::setBedMode).also { it.start() }
         }
@@ -2721,7 +2721,7 @@ class MainActivity : AppCompatActivity() {
      */
     private fun onShortcutKey(event: KeyEvent, captured: Boolean): Boolean {
         val shell = shellSession?.shell ?: return false
-        val captureOn = KeyCaptureService.running
+        val captureOn = keyCaptureUsable()
         if (event.keyCode == KeyEvent.KEYCODE_META_LEFT || event.keyCode == KeyEvent.KEYCODE_META_RIGHT) {
             if (event.action == KeyEvent.ACTION_DOWN) {
                 if (event.repeatCount == 0) metaAlone = true
@@ -2740,6 +2740,9 @@ class MainActivity : AppCompatActivity() {
         if (handled || (captured && Shortcuts.reservedBySystem(chord))) shortcutKeys += event.keyCode
         return event.keyCode in shortcutKeys
     }
+
+    private fun keyCaptureUsable(): Boolean = KeyCaptureService.running &&
+        shellSession?.shell?.settings?.string(ShellSettings.KEY_CAPTURE_CONSENT) == "granted"
 
     private fun runShortcut(shell: dev.halone.shell.Shell, chord: KeyChord, captureOn: Boolean): Boolean {
         val target = stereoSession?.scene?.keyTarget?.let { panel -> shell.windows().firstOrNull { it.panel === panel } }

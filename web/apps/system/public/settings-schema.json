@@ -40,6 +40,7 @@
   "input.touchpadSpeed": { "type": "number", "default": 0.12, "min": 0.03, "max": 0.4 },
   "input.mouseSpeed": { "type": "number", "default": 0.04, "min": 0.01, "max": 0.2 },
   "input.pointerMovesWithWindows": { "type": "boolean", "default": true },
+  "input.keyCaptureConsent": { "type": "enum", "default": "unasked", "values": ["unasked", "granted", "declined"] },
   "gesture.glasses.left.tap": { "type": "enum", "default": "click", "values": ["disabled", "click", "context-menu", "middle-click", "scroll-up", "scroll-down", "recenter-view", "toggle-move", "screenshot"] },
   "gesture.glasses.right.tap": { "type": "enum", "default": "click", "values": ["disabled", "click", "context-menu", "middle-click", "scroll-up", "scroll-down", "recenter-view", "toggle-move", "screenshot"] },
   "gesture.glasses.left.doubleTap": { "type": "enum", "default": "disabled", "values": ["disabled", "click", "context-menu", "middle-click", "scroll-up", "scroll-down", "recenter-view", "toggle-move", "screenshot"] },

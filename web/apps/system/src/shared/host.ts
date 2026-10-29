@@ -127,3 +127,13 @@ export function useApps(halone: HaloneClient, includeHidden = false) {
   onBeforeUnmount(off)
   return apps
 }
+
+/** Whether Android has Halone's key capture service on, looked at again now and then since it is turned on in the phone's settings. */
+export function useKeyCapture(halone: HaloneClient) {
+  const running = ref<boolean | null>(null)
+  const check = () => halone.input.keyCapture().then(({ enabled }) => (running.value = enabled), () => (running.value = null))
+  check()
+  const timer = setInterval(check, DISPLAY_POLL_MS)
+  onBeforeUnmount(() => clearInterval(timer))
+  return running
+}
