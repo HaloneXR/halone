@@ -22,7 +22,7 @@ android {
         applicationId = "dev.halone.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = buildDate.replace(".", "").toInt() * 100 + buildNumber
+        versionCode = buildDate.drop(2).replace(".", "").toInt() * 100 + buildNumber
         versionName = if (buildNumber == 0) "$buildDate-alpha" else "$buildDate.$buildNumber-alpha"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
